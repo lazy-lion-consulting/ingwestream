@@ -3,6 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "homepage": "https://github.com/lazy-lion-consulting/ingwestream",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lazy-lion-consulting/ingwestream.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lazy-lion-consulting/ingwestream/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -13,11 +21,15 @@
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^25.8.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",

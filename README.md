@@ -8,14 +8,14 @@
 
 *One window. Every stream. Zero compromise.*
 
-[![Build](https://img.shields.io/github/actions/workflow/status/Umlatt/ingwestream/build.yml?branch=main&style=flat-square&logo=github&label=build)](https://github.com/Umlatt/ingwestream/actions)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](https://github.com/Umlatt/ingwestream/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/lazy-lion-consulting/ingwestream/build.yml?branch=main&style=flat-square&logo=github&label=build)](https://github.com/lazy-lion-consulting/ingwestream/actions)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](https://github.com/lazy-lion-consulting/ingwestream/releases)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square&logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey?style=flat-square&logo=linux)](https://github.com/Umlatt/ingwestream)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey?style=flat-square&logo=linux)](https://github.com/lazy-lion-consulting/ingwestream)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](./LICENSE)
 
 </div>
@@ -82,7 +82,7 @@ Built on **Tauri v2** (Rust + OS native webviews), Ingwe is not an Electron app.
 ### Install
 
 ```bash
-git clone https://github.com/Umlatt/ingwestream.git
+git clone https://github.com/lazy-lion-consulting/ingwestream.git
 cd ingwestream
 npm install
 ```
@@ -202,4 +202,4 @@ Contributions are welcome. Please open an issue before submitting a pull request
 
 ## License
 
-MIT © [Lazy Lion Consulting](https://github.com/Umlatt)
+MIT © [Lazy Lion Consulting](https://github.com/lazy-lion-consulting)

@@ -1,0 +1,31 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  // Tailwind v4 — point at the CSS entry file, not a config JS file
+  "tailwindCSS.experimental.configFile": "src/index.css",
+  "tailwindCSS.includeLanguages": {
+    "typescript": "javascript",
+    "typescriptreact": "javascript"
+  },
+  "tailwindCSS.validate": true,
+  "css.validate": false,
+  "css.lint.unknownAtRules": "ignore",
+  // Path alias intellisense
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  // Rust-analyzer: target the tauri crate
+  "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"],
+  "rust-analyzer.cargo.features": "all",
+  // Hide build artefacts from explorer
+  "files.exclude": {
+    "src-tauri/target": true,
+    "node_modules": true
+  },
+  "search.exclude": {
+    "src-tauri/target": true,
+    "node_modules": true,
+    "dist": true
+  }
+}
