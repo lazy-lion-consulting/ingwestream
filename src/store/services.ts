@@ -47,6 +47,7 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
     set({ activeId: service.id, flyoutOpen: false, isLoading: true });
     try {
       await invoke("open_service", { serviceId: service.id, url: service.url });
+      console.log("[ingwe] open_service succeeded:", service.id);
     } catch (e) {
       console.error("[ingwe] open_service failed:", e);
     } finally {

@@ -77,6 +77,11 @@ pub fn open_service(
         LogicalSize::new(w, h.max(0.0)),
     )?;
 
+    // Explicitly show and focus the child webview. On Windows, WebView2 may not
+    // automatically surface a newly created child view above the main webview.
+    let _ = new_view.show();
+    let _ = new_view.set_focus();
+
     // Store new view under lock.
     {
         let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
