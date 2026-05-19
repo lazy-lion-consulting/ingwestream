@@ -60,39 +60,36 @@ pub fn open_service(
     let h = (inner.height as f64 / scale) - TITLEBAR_H;
     log::info!("open_service: id={service_id} logical_size={w:.0}x{h:.0}");
 
-    // Give the child webview its own data directory so WebView2 on Windows
-    // doesn't collide with the main window's user-data folder.
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map(|p| p.join("service-webview"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("service-webview"));
-
-    // WebView2 on Windows requires add_child to run on the Win32 message-loop
-    // thread (the main thread) so that COM completion callbacks can be delivered.
-    // Tauri command handlers run on a background thread-pool thread where COM
-    // callbacks never fire — causing an infinite hang. Dispatch to the main
-    // thread and wait on a one-shot channel for the result.
+    // Dispatch add_child to the Win32 main thread so that WebView2 COM
+    // completion callbacks are delivered on an STA thread with a message pump.
+    // NOTE: do NOT pass .data_directory() — that forces wry to spin up a brand-
+    // new CoreWebView2Environment (another async wait_with_pump chain) and
+    // increases the risk of reentrancy if two closures are queued.
+    log::info!("open_service: dispatching add_child to main thread");
     let (tx, rx) = std::sync::mpsc::channel::<Result<tauri::Webview<tauri::Wry>, tauri::Error>>();
     app.run_on_main_thread(move || {
+        log::info!("open_service: closure running on main thread — calling add_child");
         let result = main.add_child(
             WebviewBuilder::new("service-view", WebviewUrl::External(parsed_url))
-                .initialization_script(WEBVIEW_DARK_INIT)
-                .data_directory(data_dir),
+                .initialization_script(WEBVIEW_DARK_INIT),
             LogicalPosition::new(0.0, TITLEBAR_H),
             LogicalSize::new(w, h.max(0.0)),
         );
+        log::info!("open_service: add_child returned ok={}", result.is_ok());
         if let Ok(ref v) = result {
             let _ = v.show();
             let _ = v.set_focus();
         }
         let _ = tx.send(result);
     })?;
+    log::info!("open_service: closure dispatched — waiting on channel");
 
     let new_view = rx
         .recv()
         .map_err(|_| AppError::Tauri("add_child channel closed".into()))?
         .map_err(AppError::from)?;
+
+    log::info!("open_service: channel resolved — webview handle received");
 
     // Store new view under lock.
     {

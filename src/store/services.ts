@@ -43,6 +43,11 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
   },
 
   openService: async (service) => {
+    // Prevent concurrent calls — double-clicks or rapid re-invocations would
+    // queue two add_child closures on the main thread. The first closure's
+    // wait_with_pump nested message loop would then dispatch the second closure
+    // causing a WebView2 reentrancy deadlock (both try to register "service-view").
+    if (get().isLoading) return;
     // Optimistic update: title and loading bar appear immediately.
     set({ activeId: service.id, flyoutOpen: false, isLoading: true });
     try {
