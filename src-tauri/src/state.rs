@@ -6,7 +6,6 @@ use std::time::Instant;
 pub enum WebviewState {
     Active,
     Suspended,
-    Destroyed,
 }
 
 /// A single managed streaming-service webview.
