@@ -3,58 +3,60 @@ import { invoke } from "@tauri-apps/api/core";
 import { SERVICES, type ServiceDefinition } from "@/services/serviceRegistry";
 
 interface ServicesState {
-  /** Services that have been opened (webview created in Rust) */
-  loaded: Set<string>;
   /** Currently visible service id, or null */
   activeId: string | null;
   /** Whether the service picker flyout is open */
   flyoutOpen: boolean;
+  /** True while open_service command is in-flight */
+  isLoading: boolean;
 
   openService: (service: ServiceDefinition) => Promise<void>;
-  switchService: (id: string) => Promise<void>;
-  closeService: (id: string) => Promise<void>;
+  closeService: () => Promise<void>;
   toggleFlyout: () => void;
   closeFlyout: () => void;
 }
 
 export const useServicesStore = create<ServicesState>((set, get) => ({
-  loaded: new Set(),
   activeId: null,
   flyoutOpen: false,
+  isLoading: false,
 
-  toggleFlyout: () => set((s) => ({ flyoutOpen: !s.flyoutOpen })),
-  closeFlyout: () => set({ flyoutOpen: false }),
+  toggleFlyout: () => {
+    const { flyoutOpen, activeId } = get();
+    const opening = !flyoutOpen;
+    set({ flyoutOpen: opening });
+    if (activeId) {
+      invoke(opening ? "hide_service_view" : "show_service_view").catch((e) =>
+        console.error("flyout toggle error:", e),
+      );
+    }
+  },
+
+  closeFlyout: () => {
+    const { activeId } = get();
+    set({ flyoutOpen: false });
+    if (activeId) {
+      invoke("show_service_view").catch((e) =>
+        console.error("show_service_view error:", e),
+      );
+    }
+  },
 
   openService: async (service) => {
-    const { loaded, switchService } = get();
-
-    if (!loaded.has(service.id)) {
+    // Optimistic update: title and loading bar appear immediately.
+    set({ activeId: service.id, flyoutOpen: false, isLoading: true });
+    try {
       await invoke("open_service", { serviceId: service.id, url: service.url });
-      set((s) => ({ loaded: new Set(s.loaded).add(service.id) }));
+    } catch (e) {
+      console.error("[ingwe] open_service failed:", e);
+    } finally {
+      set({ isLoading: false });
     }
-
-    await switchService(service.id);
-    set({ flyoutOpen: false });
   },
 
-  switchService: async (id) => {
-    const { activeId } = get();
-    if (activeId === id) return;
-
-    await invoke("switch_service", { serviceId: id });
-    set({ activeId: id });
-  },
-
-  closeService: async (id) => {
-    await invoke("close_service", { serviceId: id });
-    set((s) => {
-      const next = new Set(s.loaded);
-      next.delete(id);
-      return {
-        loaded: next,
-        activeId: s.activeId === id ? null : s.activeId,
-      };
-    });
+  closeService: async () => {
+    await invoke("close_service");
+    set({ activeId: null });
   },
 }));
 

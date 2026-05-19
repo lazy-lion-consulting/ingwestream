@@ -1,30 +1,41 @@
 @import "tailwindcss";
 
+@keyframes ingwe-loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(210%);
+  }
+}
+
 @theme {
+  --animate-loading-bar: ingwe-loading-bar 1.3s ease-in-out infinite;
+
   /* OLED blacks + deep gray scale */
-  --color-bg-base:     #000000;
-  --color-bg-surface:  #0a0a0a;
+  --color-bg-base: #000000;
+  --color-bg-surface: #0a0a0a;
   --color-bg-elevated: #111111;
-  --color-bg-overlay:  #1a1a1a;
-  --color-bg-subtle:   #222222;
+  --color-bg-overlay: #1a1a1a;
+  --color-bg-subtle: #222222;
 
   /* Borders */
-  --color-border-base:   #2a2a2a;
+  --color-border-base: #2a2a2a;
   --color-border-strong: #3a3a3a;
 
   /* Text */
-  --color-text-primary:   #f0f0f0;
+  --color-text-primary: #f0f0f0;
   --color-text-secondary: #a0a0a0;
-  --color-text-muted:     #606060;
-  --color-text-disabled:  #404040;
+  --color-text-muted: #606060;
+  --color-text-disabled: #404040;
 
   /* Accent */
-  --color-accent:       #4f86f7;
+  --color-accent: #4f86f7;
   --color-accent-hover: #6a9bf9;
-  --color-accent-dim:   #1a2f5a;
+  --color-accent-dim: #1a2f5a;
 
   /* Danger */
-  --color-danger:     #e05252;
+  --color-danger: #e05252;
   --color-danger-dim: #3b1818;
 
   /* Radii */
@@ -39,26 +50,26 @@
 @layer base {
   /* shadcn/ui CSS variable mapping */
   :root {
-    --background:             0 0% 0%;
-    --foreground:             0 0% 94%;
-    --card:                   0 0% 4%;
-    --card-foreground:        0 0% 94%;
-    --popover:                0 0% 7%;
-    --popover-foreground:     0 0% 94%;
-    --primary:                220 90% 64%;
-    --primary-foreground:     220 20% 10%;
-    --secondary:              0 0% 13%;
-    --secondary-foreground:   0 0% 94%;
-    --muted:                  0 0% 13%;
-    --muted-foreground:       0 0% 63%;
-    --accent:                 0 0% 13%;
-    --accent-foreground:      0 0% 94%;
-    --destructive:            0 62% 60%;
+    --background: 0 0% 0%;
+    --foreground: 0 0% 94%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 94%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 94%;
+    --primary: 220 90% 64%;
+    --primary-foreground: 220 20% 10%;
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 94%;
+    --muted: 0 0% 13%;
+    --muted-foreground: 0 0% 63%;
+    --accent: 0 0% 13%;
+    --accent-foreground: 0 0% 94%;
+    --destructive: 0 62% 60%;
     --destructive-foreground: 0 0% 94%;
-    --border:                 0 0% 16%;
-    --input:                  0 0% 16%;
-    --ring:                   220 90% 64%;
-    --radius:                 0.5rem;
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+    --ring: 220 90% 64%;
+    --radius: 0.5rem;
   }
 
   * {

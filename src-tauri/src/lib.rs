@@ -11,14 +11,28 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("ingwe".into()),
+                    },
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Mutex::new(AppState::new()))
         .invoke_handler(tauri::generate_handler![
             commands::open_service,
-            commands::switch_service,
             commands::close_service,
+            commands::show_service_view,
+            commands::hide_service_view,
         ])
         .setup(|app| {
             tray::build_tray(&app.handle())?;
@@ -26,27 +40,19 @@ pub fn run() {
                 eprintln!("Warning: media key shortcuts unavailable on this system: {e}");
             }
 
-            // Show main window after setup (window starts hidden in tauri.conf.json)
             if let Some(w) = app.get_webview_window("main") {
                 w.show()?;
                 w.set_focus()?;
             }
 
-            // Background GC timer — every 60 s destroy webviews idle > 10 min
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-                loop {
-                    interval.tick().await;
-                    if let Some(state) = handle.try_state::<Mutex<AppState>>() {
-                        if let Ok(mut s) = state.lock() {
-                            commands::gc_idle_webviews(&mut s);
-                        }
-                    }
-                }
-            });
-
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Resized(_) = event {
+                    commands::resize_service_view(window.app_handle());
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

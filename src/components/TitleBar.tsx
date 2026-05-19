@@ -6,6 +6,7 @@ export function TitleBar() {
   const win = getCurrentWindow();
   const toggleFlyout = useServicesStore((s) => s.toggleFlyout);
   const activeId = useServicesStore((s) => s.activeId);
+  const isLoading = useServicesStore((s) => s.isLoading);
 
   const activeLabel = activeId
     ? (SERVICES.find((s) => s.id === activeId)?.label ?? null)
@@ -14,7 +15,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0"
+      className="relative h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0"
     >
       {/* Left: menu toggle + app/service name */}
       <div className="flex items-center h-full">
@@ -57,6 +58,13 @@ export function TitleBar() {
           <X className="size-3.5" />
         </button>
       </div>
+
+      {/* Loading bar */}
+      {isLoading && (
+        <div className="absolute bottom-0 left-0 right-0 h-[2px] overflow-hidden pointer-events-none">
+          <div className="absolute h-full w-1/2 bg-accent animate-loading-bar" />
+        </div>
+      )}
     </div>
   );
 }

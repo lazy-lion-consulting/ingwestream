@@ -31,11 +31,9 @@ function ServiceIcon({ name, ...props }: { name: string } & LucideProps) {
 function ServiceItem({
   service,
   isActive,
-  isLoaded,
 }: {
   service: ServiceDefinition;
   isActive: boolean;
-  isLoaded: boolean;
 }) {
   const openService = useServicesStore((s) => s.openService);
 
@@ -54,9 +52,6 @@ function ServiceItem({
         className={cn("size-4 shrink-0", isActive ? "text-accent" : "")}
       />
       <span className="truncate">{service.label}</span>
-      {isLoaded && !isActive && (
-        <span className="ml-auto size-1.5 rounded-full bg-accent-dim shrink-0" />
-      )}
     </button>
   );
 }
@@ -65,7 +60,6 @@ export function Sidebar() {
   const flyoutOpen = useServicesStore((s) => s.flyoutOpen);
   const closeFlyout = useServicesStore((s) => s.closeFlyout);
   const activeId = useServicesStore((s) => s.activeId);
-  const loaded = useServicesStore((s) => s.loaded);
 
   return (
     <>
@@ -73,7 +67,9 @@ export function Sidebar() {
       <div
         className={cn(
           "absolute inset-0 z-20 bg-black/50 transition-opacity duration-200",
-          flyoutOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+          flyoutOpen
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none",
         )}
         onClick={closeFlyout}
       />
@@ -93,7 +89,6 @@ export function Sidebar() {
               key={svc.id}
               service={svc}
               isActive={activeId === svc.id}
-              isLoaded={loaded.has(svc.id)}
             />
           ))}
         </nav>
