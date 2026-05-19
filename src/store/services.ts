@@ -7,15 +7,23 @@ interface ServicesState {
   loaded: Set<string>;
   /** Currently visible service id, or null */
   activeId: string | null;
+  /** Whether the service picker flyout is open */
+  flyoutOpen: boolean;
 
   openService: (service: ServiceDefinition) => Promise<void>;
   switchService: (id: string) => Promise<void>;
   closeService: (id: string) => Promise<void>;
+  toggleFlyout: () => void;
+  closeFlyout: () => void;
 }
 
 export const useServicesStore = create<ServicesState>((set, get) => ({
   loaded: new Set(),
   activeId: null,
+  flyoutOpen: false,
+
+  toggleFlyout: () => set((s) => ({ flyoutOpen: !s.flyoutOpen })),
+  closeFlyout: () => set({ flyoutOpen: false }),
 
   openService: async (service) => {
     const { loaded, switchService } = get();
@@ -26,6 +34,7 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
     }
 
     await switchService(service.id);
+    set({ flyoutOpen: false });
   },
 
   switchService: async (id) => {

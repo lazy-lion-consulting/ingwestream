@@ -54,7 +54,6 @@ function ServiceItem({
         className={cn("size-4 shrink-0", isActive ? "text-accent" : "")}
       />
       <span className="truncate">{service.label}</span>
-      {/* Dot indicator when loaded but not active */}
       {isLoaded && !isActive && (
         <span className="ml-auto size-1.5 rounded-full bg-accent-dim shrink-0" />
       )}
@@ -63,28 +62,48 @@ function ServiceItem({
 }
 
 export function Sidebar() {
+  const flyoutOpen = useServicesStore((s) => s.flyoutOpen);
+  const closeFlyout = useServicesStore((s) => s.closeFlyout);
   const activeId = useServicesStore((s) => s.activeId);
   const loaded = useServicesStore((s) => s.loaded);
 
   return (
-    <aside className="w-52 shrink-0 flex flex-col bg-bg-surface border-r border-border-base z-10">
-      <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-        {SERVICES.map((svc) => (
-          <ServiceItem
-            key={svc.id}
-            service={svc}
-            isActive={activeId === svc.id}
-            isLoaded={loaded.has(svc.id)}
-          />
-        ))}
-      </nav>
+    <>
+      {/* Backdrop */}
+      <div
+        className={cn(
+          "absolute inset-0 z-20 bg-black/50 transition-opacity duration-200",
+          flyoutOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+        )}
+        onClick={closeFlyout}
+      />
 
-      {/* Footer branding */}
-      <div className="px-3 py-3 border-t border-border-base">
-        <p className="text-[10px] text-text-disabled tracking-widest uppercase">
-          Ingwe
-        </p>
-      </div>
-    </aside>
+      {/* Flyout panel */}
+      <aside
+        className={cn(
+          "absolute left-0 top-0 bottom-0 w-52 flex flex-col",
+          "bg-bg-surface border-r border-border-base z-30",
+          "transition-transform duration-200 ease-in-out",
+          flyoutOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+          {SERVICES.map((svc) => (
+            <ServiceItem
+              key={svc.id}
+              service={svc}
+              isActive={activeId === svc.id}
+              isLoaded={loaded.has(svc.id)}
+            />
+          ))}
+        </nav>
+
+        <div className="px-3 py-3 border-t border-border-base">
+          <p className="text-[10px] text-text-disabled tracking-widest uppercase">
+            Ingwe
+          </p>
+        </div>
+      </aside>
+    </>
   );
 }

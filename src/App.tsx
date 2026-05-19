@@ -6,9 +6,9 @@ function App() {
   return (
     <div className="flex flex-col h-screen bg-bg-base text-text-primary overflow-hidden">
       <TitleBar />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
+      <div className="relative flex-1 overflow-hidden">
         <WebviewMount />
+        <Sidebar />
       </div>
     </div>
   );

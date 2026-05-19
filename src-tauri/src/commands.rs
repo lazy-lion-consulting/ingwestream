@@ -48,10 +48,15 @@ pub fn open_service(
     service_id: String,
     url: String,
 ) -> Result<(), AppError> {
-    let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
-
-    if s.entries.contains_key(&service_id) {
-        return Ok(());
+    // Check under lock, then drop it before building the webview.
+    // Holding the mutex across WebviewWindowBuilder::build() deadlocks on
+    // Windows because WebView2 initialisation dispatches back to the main
+    // thread, which may itself need the state lock.
+    {
+        let s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+        if s.entries.contains_key(&service_id) {
+            return Ok(());
+        }
     }
 
     let parsed_url = url
@@ -65,14 +70,14 @@ pub fn open_service(
         .inner_size(1200.0, 800.0)
         .build()?;
 
-    s.entries.insert(
-        service_id,
-        WebviewEntry {
-            window: wv,
-            last_active: Instant::now(),
-            state: WebviewState::Suspended,
-        },
-    );
+    // Re-acquire lock to insert. Use entry() so a concurrent open doesn't
+    // create a duplicate (the extra window will be dropped immediately).
+    let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+    s.entries.entry(service_id).or_insert(WebviewEntry {
+        window: wv,
+        last_active: Instant::now(),
+        state: WebviewState::Suspended,
+    });
 
     Ok(())
 }
@@ -84,28 +89,38 @@ pub fn switch_service(
     state: State<'_, Mutex<AppState>>,
     service_id: String,
 ) -> Result<(), AppError> {
-    let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+    // Collect window handles and update bookkeeping under the lock, then drop
+    // the lock before touching any window APIs (show/hide/eval all dispatch to
+    // the main thread and will deadlock if the mutex is still held).
+    let (new_window, prev_id) = {
+        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
 
-    // Capture previous id before mutation
-    let prev_id = s.active_service.clone();
+        let entry = s
+            .entries
+            .get_mut(&service_id)
+            .ok_or_else(|| AppError::WebviewNotFound(service_id.clone()))?;
 
-    // Show the new webview immediately
-    let entry = s
-        .entries
-        .get_mut(&service_id)
-        .ok_or_else(|| AppError::WebviewNotFound(service_id.clone()))?;
+        entry.state = WebviewState::Active;
+        entry.last_active = Instant::now();
+        let new_window = entry.window.clone();
 
-    resume_webview(&entry.window)?;
-    entry.state = WebviewState::Active;
-    entry.last_active = Instant::now();
-    s.active_service = Some(service_id.clone());
+        let prev_id = s.active_service.replace(service_id.clone());
 
-    // Schedule suspension of the previous service (800 ms grace period)
+        if let Some(ref prev) = prev_id {
+            if prev != &service_id {
+                if let Some(prev_entry) = s.entries.get_mut(prev) {
+                    prev_entry.state = WebviewState::Suspended;
+                }
+            }
+        }
+
+        (new_window, prev_id)
+    }; // mutex released
+
+    resume_webview(&new_window)?;
+
     if let Some(prev) = prev_id {
         if prev != service_id {
-            if let Some(prev_entry) = s.entries.get_mut(&prev) {
-                prev_entry.state = WebviewState::Suspended;
-            }
             let app_clone = app.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
@@ -119,15 +134,27 @@ pub fn switch_service(
 
 /// Called after the grace period — suspends if still not active.
 pub(crate) fn delayed_suspend(app: AppHandle, service_id: String) {
-    if let Some(state) = app.try_state::<Mutex<AppState>>() {
+    let window = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(mut s) = state.lock() {
             if s.active_service.as_deref() != Some(&service_id) {
                 if let Some(entry) = s.entries.get_mut(&service_id) {
-                    let _ = suspend_webview(&entry.window);
                     entry.state = WebviewState::Suspended;
+                    Some(entry.window.clone())
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    if let Some(wv) = window {
+        let _ = suspend_webview(&wv);
     }
 }
 
@@ -137,14 +164,18 @@ pub fn close_service(
     state: State<'_, Mutex<AppState>>,
     service_id: String,
 ) -> Result<(), AppError> {
-    let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+    let window = {
+        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
 
-    if let Some(entry) = s.entries.remove(&service_id) {
-        let _ = entry.window.close();
-    }
+        if s.active_service.as_deref() == Some(&service_id) {
+            s.active_service = None;
+        }
 
-    if s.active_service.as_deref() == Some(&service_id) {
-        s.active_service = None;
+        s.entries.remove(&service_id).map(|e| e.window)
+    }; // mutex released
+
+    if let Some(wv) = window {
+        let _ = wv.close();
     }
 
     Ok(())
@@ -176,14 +207,22 @@ pub fn gc_idle_webviews(state: &mut AppState) {
 
 /// Dispatch a media action string to the active webview's JS bridge.
 pub fn dispatch_media_key(app: &AppHandle, action: &str) {
-    if let Some(state) = app.try_state::<Mutex<AppState>>() {
+    let window = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(s) = state.lock() {
-            if let Some(id) = &s.active_service {
-                if let Some(entry) = s.entries.get(id) {
-                    let js = format!("window.__ingweMedia('{}');", action);
-                    let _ = entry.window.eval(&js);
-                }
-            }
+            s.active_service
+                .as_ref()
+                .and_then(|id| s.entries.get(id))
+                .map(|e| e.window.clone())
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    if let Some(wv) = window {
+        let js = format!("window.__ingweMedia('{}');", action);
+        let _ = wv.eval(&js);
     }
 }
+
