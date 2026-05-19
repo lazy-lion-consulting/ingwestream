@@ -225,4 +225,3 @@ pub fn dispatch_media_key(app: &AppHandle, action: &str) {
         let _ = wv.eval(&js);
     }
 }
-
