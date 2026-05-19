@@ -31,20 +31,24 @@ function ServiceIcon({ name, ...props }: { name: string } & LucideProps) {
 function ServiceItem({
   service,
   isActive,
+  isLoading,
 }: {
   service: ServiceDefinition;
   isActive: boolean;
+  isLoading: boolean;
 }) {
   const openService = useServicesStore((s) => s.openService);
 
   return (
     <button
       onClick={() => openService(service)}
+      disabled={isLoading}
       title={service.label}
       className={cn(
         "w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors duration-150",
         "text-text-secondary hover:text-text-primary hover:bg-bg-elevated",
         isActive && "bg-bg-overlay text-text-primary",
+        isLoading && "cursor-not-allowed opacity-60",
       )}
     >
       <ServiceIcon
@@ -60,6 +64,7 @@ export function Sidebar() {
   const flyoutOpen = useServicesStore((s) => s.flyoutOpen);
   const closeFlyout = useServicesStore((s) => s.closeFlyout);
   const activeId = useServicesStore((s) => s.activeId);
+  const isLoading = useServicesStore((s) => s.isLoading);
 
   return (
     <>
@@ -89,6 +94,7 @@ export function Sidebar() {
               key={svc.id}
               service={svc}
               isActive={activeId === svc.id}
+              isLoading={isLoading}
             />
           ))}
         </nav>

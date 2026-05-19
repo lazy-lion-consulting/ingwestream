@@ -1,8 +1,8 @@
 /// Global application state, wrapped in `Mutex<AppState>` and registered via `.manage()`.
 pub struct AppState {
-    /// The currently displayed child webview, if any.
+    /// The persistent child webview created at startup, if any.
     pub service_view: Option<tauri::Webview<tauri::Wry>>,
-    /// The id of the currently active service.
+    /// The id of the currently active service (None when no service is shown).
     pub active_service_id: Option<String>,
 }
 

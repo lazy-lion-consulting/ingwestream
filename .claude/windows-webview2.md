@@ -23,6 +23,34 @@ completion callback fires and sends on a `mpsc::Sender`.
 
 ---
 
+## Solution: persistent child webview (navigate, don't recreate)
+
+**The fundamental fix for all reentrancy / deadlock issues is to call `add_child` exactly
+once per app lifetime.** The child webview is created on first service launch and then
+reused forever. Service switching navigates the existing webview via `eval()`:
+
+```rust
+// Fast path (all subsequent launches) — no add_child, no wait_with_pump:
+v.eval(&format!("window.location.href = {url_json};"))?;
+v.show()?;
+v.set_focus()?;
+```
+
+`eval()` posts the script to WebView2 asynchronously and returns immediately. It is safe
+to call from any thread. No COM STA requirement. No reentrancy risk.
+
+`close_service` now **hides** the webview (not destroys it). The handle stays in state so
+the next `open_service` call hits the fast path. `dispatch_media_key` gates on
+`active_service_id` so media keys are not dispatched to a hidden/closed webview.
+
+Initialization scripts (WEBVIEW_DARK_INIT) persist for the webview's lifetime in WebView2
+and re-execute on every navigation, so dark mode and the media bridge work on each service.
+
+Session isolation between services is preserved — WebView2 scopes cookies/storage by
+origin domain, so Spotify and YouTube use separate storage even in one webview instance.
+
+---
+
 ## Rule 1 — Always use `run_on_main_thread`
 
 **Never call `add_child` from a Tokio background thread.**
@@ -110,28 +138,31 @@ one's `wait_with_pump` delivers the second.
 
 ## Diagnostic logging (current state)
 
-`commands.rs` `open_service` emits these log lines in order. If the process hangs,
-the last visible line identifies the exact failure point:
+`commands.rs` `open_service` emits different log lines depending on which path runs:
 
+**Fast path (2nd+ launch — navigate existing webview):**
 ```
-open_service: closing previous child webview          ← old view teardown
-open_service: id=<id> logical_size=<w>x<h>            ← size computed
-open_service: dispatching add_child to main thread    ← about to run_on_main_thread
-open_service: closure running on main thread — calling add_child   ← closure fired ✓
-open_service: add_child returned ok=true/false        ← wry finished
-open_service: closure dispatched — waiting on channel ← background thread blocking
-open_service: channel resolved — webview handle received          ← success
-open_service: child webview created for '<id>'        ← stored in state
+open_service: reusing webview for '<id>' same_service=false   ← eval() navigation
+```
+No blocking. Returns in < 1 ms.
+
+**Slow path (first launch only — add_child):**
+```
+open_service: first launch id=<id> logical_size=<w>x<h>
+open_service: dispatching add_child to main thread
+open_service: closure running on main thread — calling add_child
+open_service: add_child returned ok=true/false
+open_service: closure dispatched — waiting on channel
+open_service: channel resolved — webview handle received
+open_service: child webview created for '<id>'
 ```
 
-If logs stop at **"dispatching add_child"** → `run_on_main_thread` itself blocked (rare,
-check if main window event loop is processing a blocking operation).
+If slow-path logs stop at **"dispatching add_child"** → `run_on_main_thread` blocked.
 
-If logs stop at **"closure running on main thread"** → `add_child` is hanging inside wry
-(WebView2 `wait_with_pump` never completes). Likely causes:
+If slow-path logs stop at **"closure running on main thread"** → `add_child` hanging inside
+wry. This should only occur once per app lifetime. Likely causes:
 
-- A second concurrent `open_service` call was dispatched (frontend guard bypassed).
-- A `.data_directory()` is set on the WebviewBuilder (check for regression).
+- A `.data_directory()` was added to the WebviewBuilder (regression check).
 - The system's WebView2 runtime is corrupt or not installed.
 
 ---

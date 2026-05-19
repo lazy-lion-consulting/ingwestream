@@ -45,6 +45,8 @@ pub fn run() {
                 w.set_focus()?;
             }
 
+            commands::init_service_webview(&app.handle())?;
+
             Ok(())
         })
         .on_window_event(|window, event| {

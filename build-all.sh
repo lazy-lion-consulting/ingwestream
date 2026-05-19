@@ -81,3 +81,5 @@ else
 fi
 
 echo "────────────────────────────────────────────────────────"
+
+cp ~/development/ingwestream/src-tauri/target/x86_64-pc-windows-msvc/release/ingwestream.exe ~/Downloads/.

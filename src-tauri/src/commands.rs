@@ -22,34 +22,15 @@ impl From<tauri::Error> for AppError {
     }
 }
 
-// ── IPC commands ─────────────────────────────────────────────────────────────
+// ── Startup initialisation ────────────────────────────────────────────────────
 
-/// Open a service: closes any existing child webview and creates a new one at the given URL.
-#[tauri::command]
-pub fn open_service(
-    app: AppHandle,
-    state: State<'_, Mutex<AppState>>,
-    service_id: String,
-    url: String,
-) -> Result<(), AppError> {
-    let parsed_url = url
-        .parse::<tauri::Url>()
-        .map_err(|e| AppError::InvalidUrl(e.to_string()))?;
-
-    // Take the existing view under lock, update active id, then release.
-    let old_view = {
-        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
-        s.active_service_id = Some(service_id.clone());
-        s.service_view.take()
-    };
-
-    // Close previous child webview OUTSIDE the lock.
-    if let Some(v) = old_view {
-        log::info!("open_service: closing previous child webview");
-        let _ = v.close();
-    }
-
-    // Get main window and compute content area size.
+/// Create the persistent child webview at app startup.
+///
+/// Called from `setup` which runs on the Win32 main thread — the only safe
+/// context for `add_child` / WebView2 COM STA initialisation. The webview
+/// loads `about:blank` and is immediately hidden; `open_service` navigates
+/// it via `eval()` with no further COM work required.
+pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
     let main = app
         .get_window("main")
         .ok_or_else(|| AppError::Tauri("main window not found".into()))?;
@@ -58,61 +39,78 @@ pub fn open_service(
     let scale = main.scale_factor()?;
     let w = inner.width as f64 / scale;
     let h = (inner.height as f64 / scale) - TITLEBAR_H;
-    log::info!("open_service: id={service_id} logical_size={w:.0}x{h:.0}");
 
-    // Dispatch add_child to the Win32 main thread so that WebView2 COM
-    // completion callbacks are delivered on an STA thread with a message pump.
-    // NOTE: do NOT pass .data_directory() — that forces wry to spin up a brand-
-    // new CoreWebView2Environment (another async wait_with_pump chain) and
-    // increases the risk of reentrancy if two closures are queued.
-    log::info!("open_service: dispatching add_child to main thread");
-    let (tx, rx) = std::sync::mpsc::channel::<Result<tauri::Webview<tauri::Wry>, tauri::Error>>();
-    app.run_on_main_thread(move || {
-        log::info!("open_service: closure running on main thread — calling add_child");
-        let result = main.add_child(
-            WebviewBuilder::new("service-view", WebviewUrl::External(parsed_url))
-                .initialization_script(WEBVIEW_DARK_INIT),
-            LogicalPosition::new(0.0, TITLEBAR_H),
-            LogicalSize::new(w, h.max(0.0)),
-        );
-        log::info!("open_service: add_child returned ok={}", result.is_ok());
-        if let Ok(ref v) = result {
-            let _ = v.show();
-            let _ = v.set_focus();
-        }
-        let _ = tx.send(result);
-    })?;
-    log::info!("open_service: closure dispatched — waiting on channel");
+    let blank_url = "about:blank"
+        .parse::<tauri::Url>()
+        .map_err(|e| AppError::InvalidUrl(e.to_string()))?;
 
-    let new_view = rx
-        .recv()
-        .map_err(|_| AppError::Tauri("add_child channel closed".into()))?
-        .map_err(AppError::from)?;
+    log::info!("init_service_webview: creating child webview logical_size={w:.0}x{h:.0}");
+    let service_view = main.add_child(
+        WebviewBuilder::new("service-view", WebviewUrl::External(blank_url))
+            .initialization_script(WEBVIEW_DARK_INIT),
+        LogicalPosition::new(0.0, TITLEBAR_H),
+        LogicalSize::new(w, h.max(0.0)),
+    )?;
+    service_view.hide()?;
+    log::info!("init_service_webview: child webview created and hidden");
 
-    log::info!("open_service: channel resolved — webview handle received");
-
-    // Store new view under lock.
-    {
-        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
-        s.service_view = Some(new_view);
-    }
-
-    log::info!("open_service: child webview created for '{service_id}'");
+    let state = app
+        .try_state::<Mutex<AppState>>()
+        .ok_or_else(|| AppError::Tauri("AppState not managed".into()))?;
+    let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+    s.service_view = Some(service_view);
     Ok(())
 }
 
-/// Close and destroy the active service child webview.
+// ── IPC commands ─────────────────────────────────────────────────────────────
+
+/// Navigate the persistent child webview to `url` and show it.
+///
+/// The webview was created in `setup`; this command only needs `eval()` to
+/// change the page, which is async and safe to call from any thread.
+#[tauri::command]
+pub fn open_service(
+    state: State<'_, Mutex<AppState>>,
+    service_id: String,
+    url: String,
+) -> Result<(), AppError> {
+    let parsed_url = url
+        .parse::<tauri::Url>()
+        .map_err(|e| AppError::InvalidUrl(e.to_string()))?;
+
+    let (view, is_same_service) = {
+        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+        let same = s.active_service_id.as_deref() == Some(service_id.as_str());
+        s.active_service_id = Some(service_id.clone());
+        (s.service_view.clone(), same)
+    };
+
+    let v = view.ok_or_else(|| AppError::Tauri("service webview not initialized".into()))?;
+
+    log::info!("open_service: id={service_id} same_service={is_same_service}");
+    if !is_same_service {
+        let url_json = serde_json::to_string(parsed_url.as_str())
+            .map_err(|e| AppError::Tauri(e.to_string()))?;
+        v.eval(&format!("window.location.href = {url_json};"))?;
+    }
+    v.show()?;
+    v.set_focus()?;
+    Ok(())
+}
+
+/// Hide the active service child webview. The webview is kept alive so the
+/// next `open_service` call can resume or navigate instantly.
 #[tauri::command]
 pub fn close_service(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     let view = {
         let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
         s.active_service_id = None;
-        s.service_view.take()
+        s.service_view.clone()
     };
 
     if let Some(v) = view {
-        log::info!("close_service: closing service view");
-        let _ = v.close();
+        log::info!("close_service: hiding service view (webview retained for reuse)");
+        v.hide()?;
     }
 
     Ok(())
@@ -183,10 +181,16 @@ pub fn resize_service_view(app: &AppHandle) {
 }
 
 /// Forward a media key action to the active service webview via the injected JS bridge.
+/// Guards on `active_service_id` — the webview persists even when "closed" (hidden),
+/// so we must not dispatch to it unless a service is logically active.
 pub fn dispatch_media_key(app: &AppHandle, action: &str) {
     let view = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(s) = state.lock() {
-            s.service_view.clone()
+            if s.active_service_id.is_some() {
+                s.service_view.clone()
+            } else {
+                None
+            }
         } else {
             None
         }
