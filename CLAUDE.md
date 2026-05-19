@@ -53,7 +53,7 @@ ingwestream/
 │   └── src/
 │       ├── lib.rs               ← Builder setup: plugins, manage, invoke_handler, setup, on_window_event
 │       ├── main.rs              ← Binary entry (calls lib::run)
-│       ├── commands.rs          ← IPC handlers: open_service, close_service, show/hide_service_view
+│       ├── commands.rs          ← IPC handlers + init_service_webview startup helper
 │       ├── state.rs             ← AppState { service_view, active_service_id }
 │       ├── scripts.rs           ← WEBVIEW_DARK_INIT, SUSPEND_SCRIPT, RESUME_SCRIPT
 │       ├── tray.rs              ← System tray: show/prev/play/next/quit
@@ -118,12 +118,12 @@ provides layout context.
 
 ## IPC surface (frontend → backend)
 
-| Command             | Args                             | Returns | Notes                          |
-| ------------------- | -------------------------------- | ------- | ------------------------------ |
-| `open_service`      | `serviceId: string, url: string` | `void`  | Creates/replaces child webview |
-| `close_service`     | —                                | `void`  | Destroys child webview         |
-| `show_service_view` | —                                | `void`  | Shows child (flyout closed)    |
-| `hide_service_view` | —                                | `void`  | Hides child (flyout open)      |
+| Command             | Args                             | Returns | Notes                                      |
+| ------------------- | -------------------------------- | ------- | ------------------------------------------ |
+| `open_service`      | `serviceId: string, url: string` | `void`  | Navigates persistent webview, shows it     |
+| `close_service`     | —                                | `void`  | Hides webview (retained for reuse)         |
+| `show_service_view` | —                                | `void`  | Shows child (flyout closed)                |
+| `hide_service_view` | —                                | `void`  | Hides child (flyout open)                  |
 
 All commands return `Result<(), AppError>` serialised as `{ message: string }` on error.
 
@@ -189,8 +189,8 @@ interface ServicesState {
 }
 ```
 
-**Critical guard:** `openService` bails immediately if `isLoading` is true — prevents
-concurrent `add_child` calls that cause a WebView2 reentrancy deadlock on Windows.
+**`isLoading` guard:** `openService` bails immediately if `isLoading` is true — prevents
+UI flicker and double-navigation while a service is loading.
 
 ---
 
@@ -214,14 +214,13 @@ concurrent `add_child` calls that cause a WebView2 reentrancy deadlock on Window
 
 ## Windows-specific ▸ full detail in `.claude/windows-webview2.md`
 
-- `add_child` must run on the Win32 main thread via `app.run_on_main_thread()`
-- **Never** call `add_child` from a Tokio background thread (COM STA / wry `wait_with_pump` incompatibility)
-- **Never** queue two `run_on_main_thread` closures that both call `add_child` — the nested
-  `wait_with_pump` message pump will dispatch the second closure inside the first's COM wait,
-  causing a label-registry deadlock
+- `add_child` is called **once** in `setup` via `init_service_webview` — never from a command handler
+- `setup` runs on the Win32 main thread before the event loop starts, making it the only safe context
+  for WebView2 COM STA initialisation (`wait_with_pump`)
+- **Never** call `add_child` from a Tokio background thread or from inside an active WebView2 IPC event
 - Do **not** pass `.data_directory()` to `WebviewBuilder` — it forces a new `CoreWebView2Environment`
-  which adds another `wait_with_pump` chain to an already-complex call path
-- The `isLoading` guard in the frontend store is the primary protection against double-dispatch
+  which adds an extra `wait_with_pump` chain
+- All service switching after startup uses `eval("window.location.href = …")` — no COM work, safe from any thread
 
 ---
 

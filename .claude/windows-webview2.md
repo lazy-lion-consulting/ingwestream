@@ -23,27 +23,31 @@ completion callback fires and sends on a `mpsc::Sender`.
 
 ---
 
-## Solution: persistent child webview (navigate, don't recreate)
+## Solution: pre-create in `setup`, navigate via `eval()`
 
-**The fundamental fix for all reentrancy / deadlock issues is to call `add_child` exactly
-once per app lifetime.** The child webview is created on first service launch and then
-reused forever. Service switching navigates the existing webview via `eval()`:
+**The fundamental fix is to call `add_child` exactly once, during `setup`, before any
+WebView2 IPC traffic or user interaction.** The child webview starts on `about:blank` and
+is immediately hidden. Service switching navigates it via `eval()`:
 
 ```rust
-// Fast path (all subsequent launches) — no add_child, no wait_with_pump:
+// In setup (Win32 main thread, clean message pump):
+commands::init_service_webview(&app.handle())?;
+
+// open_service command (any thread — no COM work):
 v.eval(&format!("window.location.href = {url_json};"))?;
 v.show()?;
 v.set_focus()?;
 ```
 
 `eval()` posts the script to WebView2 asynchronously and returns immediately. It is safe
-to call from any thread. No COM STA requirement. No reentrancy risk.
+to call from any thread, including Tokio worker threads. No COM STA requirement. No
+reentrancy risk. No `run_on_main_thread` needed.
 
-`close_service` now **hides** the webview (not destroys it). The handle stays in state so
-the next `open_service` call hits the fast path. `dispatch_media_key` gates on
-`active_service_id` so media keys are not dispatched to a hidden/closed webview.
+`close_service` **hides** the webview (does not destroy it). The handle stays in `AppState`
+so the next `open_service` hits the fast eval path. `dispatch_media_key` gates on
+`active_service_id` so media keys are not dispatched to a hidden/inactive webview.
 
-Initialization scripts (WEBVIEW_DARK_INIT) persist for the webview's lifetime in WebView2
+Initialization scripts (`WEBVIEW_DARK_INIT`) persist for the webview's lifetime in WebView2
 and re-execute on every navigation, so dark mode and the media bridge work on each service.
 
 Session isolation between services is preserved — WebView2 scopes cookies/storage by
@@ -51,72 +55,59 @@ origin domain, so Spotify and YouTube use separate storage even in one webview i
 
 ---
 
-## Rule 1 — Always use `run_on_main_thread`
+## Rule 1 — Call `add_child` only from `setup`
 
-**Never call `add_child` from a Tokio background thread.**
+**Never call `add_child` from a `#[tauri::command]` handler or any Tokio worker thread.**
 
-Tauri command handlers (`#[tauri::command]`) run on Tokio worker threads. Those threads
-may not be properly initialised as COM STA, and even if they are, `wait_with_pump` on a
-background thread pumps messages that can dispatch other queued work in ways that interfere
-with the main event loop.
+Tauri command handlers run on Tokio worker threads. `wait_with_pump` called on a background
+thread pumps the *main thread's* message queue by posting messages cross-thread — this
+interferes with in-flight WebView2 IPC events and can cause the COM wait to never complete.
 
-The correct pattern:
+Even on the correct Win32 main thread via `run_on_main_thread`, calling `add_child` from
+inside an active WebView2 IPC event handler context creates a reentrant `wait_with_pump`
+loop that can hang indefinitely.
 
-```rust
-let (tx, rx) = std::sync::mpsc::channel::<Result<tauri::Webview<tauri::Wry>, tauri::Error>>();
-app.run_on_main_thread(move || {
-    let result = main_window.add_child(
-        WebviewBuilder::new("service-view", WebviewUrl::External(url))
-            .initialization_script(WEBVIEW_DARK_INIT),
-        position,
-        size,
-    );
-    let _ = tx.send(result);
-})?;
-let new_view = rx.recv()…?;
-```
+The only safe context for `add_child` is Tauri's `setup` callback:
 
-The closure runs on the Win32 event loop thread (the same STA thread that owns the parent
-HWND). `wait_with_pump` inside wry pumps that thread's message queue, WebView2 delivers its
-COM callbacks, the channel unblocks, and control returns.
+- Runs on the Win32 main thread.
+- Runs before the event loop starts, before any WebView2 IPC events.
+- Message pump is clean — no competing COM callbacks in flight.
+- Consistent with how Tauri itself initialises all declared windows.
 
 ---
 
 ## Rule 2 — Never queue two concurrent `add_child` closures
 
-**The `isLoading` guard in the frontend store is mandatory.**
+This is now a historical note — `add_child` is called once in `setup` and never again.
+The mechanism that caused the original deadlock is documented here for reference.
 
 When `wait_with_pump` pumps Win32 messages, it dispatches ALL pending messages — including
-the winit user-event that would fire a second `run_on_main_thread` closure. If two
-`open_service` calls are in-flight simultaneously:
+winit user-events queued by `run_on_main_thread`. If two `add_child` closures were queued:
 
 1. Closure A runs, enters `wait_with_pump` for WebView2 environment creation.
-2. `wait_with_pump` processes all messages, including the queued winit event for Closure B.
-3. Closure B runs _inside_ Closure A's `wait_with_pump` loop.
-4. Closure B also tries to create `"service-view"` → Tauri label-registry conflict OR
-   WebView2 reentrancy deadlock (wry's own comment references this exact pattern).
-5. The window freezes.
+2. `wait_with_pump` processes pending messages, including the winit event for Closure B.
+3. Closure B runs *inside* Closure A's `wait_with_pump` loop.
+4. Closure B tries to register label `"service-view"` → label-registry conflict or
+   WebView2 reentrancy deadlock.
+5. Window freezes permanently.
 
-**Fix in place:** `src/store/services.ts` `openService` checks `if (get().isLoading) return`
-before calling `invoke`. This prevents the second IPC call from ever being dispatched.
+Since `add_child` now runs only in `setup` (before the event loop, before any user
+interaction), this scenario cannot occur.
 
-**Never remove or weaken this guard.**
+The `isLoading` guard in `src/store/services.ts` is retained as a UX guard — it prevents
+visible spinner flicker from rapid-clicking while a service is navigating — but it is no
+longer load-bearing for deadlock prevention.
 
 ---
 
-## Rule 3 — Never pass `.data_directory()` to WebviewBuilder
+## Rule 3 — Never pass `.data_directory()` to `WebviewBuilder`
 
 `.data_directory()` forces wry to call `CreateCoreWebView2EnvironmentWithOptions` with a
-specific user-data path, which creates a brand-new `CoreWebView2Environment`. This is a
-second async operation requiring its own `wait_with_pump` chain. On top of the existing
-controller creation chain, this:
-
-- Doubles the number of COM async callbacks in flight.
-- Increases the window of time during which a second closure could be dispatched.
-- Has been observed to cause deadlocks on the Ingwe codebase.
+specific user-data path, creating a brand-new `CoreWebView2Environment`. This is a second
+async operation requiring its own `wait_with_pump` chain, even when called from `setup`.
 
 Without `.data_directory()`, wry reuses the default user-data folder shared with the main
-WebviewWindow, skipping the environment-creation step.
+WebviewWindow, skipping the environment-creation step entirely.
 
 ---
 
@@ -131,39 +122,33 @@ From wry's own source comment in `webview2/mod.rs`:
 // https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model#reentrancy
 ```
 
-The same reentrancy applies when two `add_child` closures are dispatched and the first
-one's `wait_with_pump` delivers the second.
+The same reentrancy applies when `add_child` is called during any active WebView2 callback
+or event handler context.
 
 ---
 
-## Diagnostic logging (current state)
+## Diagnostic logging
 
-`commands.rs` `open_service` emits different log lines depending on which path runs:
-
-**Fast path (2nd+ launch — navigate existing webview):**
+`init_service_webview` (called once in `setup`):
 ```
-open_service: reusing webview for '<id>' same_service=false   ← eval() navigation
-```
-No blocking. Returns in < 1 ms.
-
-**Slow path (first launch only — add_child):**
-```
-open_service: first launch id=<id> logical_size=<w>x<h>
-open_service: dispatching add_child to main thread
-open_service: closure running on main thread — calling add_child
-open_service: add_child returned ok=true/false
-open_service: closure dispatched — waiting on channel
-open_service: channel resolved — webview handle received
-open_service: child webview created for '<id>'
+init_service_webview: creating child webview logical_size=<w>x<h>
+init_service_webview: child webview created and hidden
 ```
 
-If slow-path logs stop at **"dispatching add_child"** → `run_on_main_thread` blocked.
+`open_service` command (called on every service selection):
+```
+open_service: id=<service-id> same_service=false   ← navigates + shows
+open_service: id=<service-id> same_service=true    ← shows only (no reload)
+```
 
-If slow-path logs stop at **"closure running on main thread"** → `add_child` hanging inside
-wry. This should only occur once per app lifetime. Likely causes:
-
-- A `.data_directory()` was added to the WebviewBuilder (regression check).
+If `init_service_webview` logs stop at **"creating child webview"** → `add_child` hung.
+Likely causes:
+- A `.data_directory()` was added to the `WebviewBuilder` (regression check).
 - The system's WebView2 runtime is corrupt or not installed.
+- Another `add_child` was called concurrently (should be impossible given current code).
+
+If `open_service` returns `Err("service webview not initialized")` → `init_service_webview`
+failed during setup and the error was swallowed. Check logs for the init failure.
 
 ---
 
@@ -189,20 +174,20 @@ pub fn wait_with_pump<T>(rx: Receiver<T>) -> Result<T> {
 ```
 
 `DispatchMessageW` dispatches to any HWND's window procedure, including winit's hidden
-message window which handles `run_on_main_thread` user events. This is why a queued
-second closure can fire during the first closure's WebView2 wait.
+message window which handles `run_on_main_thread` user events. This is why calling
+`add_child` during active WebView2 IPC processing is unsafe.
 
 ---
 
 ## Test procedure for Windows
 
-1. Build: `npm run tauri build` on a Windows machine (or CI).
-2. Run the `.exe`. Observe logs in the console or `%APPDATA%\ingwe\logs\ingwe.log`.
-3. Click a service once. Wait for it to load. Expected: service opens within ~3 s.
-4. Rapidly click a different service while the first is loading. Expected: second click
-   is silently ignored (loading bar still running), first service loads, then re-clicking
-   works.
-5. Check that the window stays responsive (can minimise/maximise/drag) throughout.
+1. Build: `./build-all.sh` (or `npm run tauri build` on a Windows machine).
+2. Run the `.exe`. Observe logs in `%LOCALAPPDATA%\com.lazylionconsulting.ingwestream\logs\Ingwe.log`.
+3. On startup, confirm both init log lines appear: `init_service_webview: creating…` then `…created and hidden`.
+4. Click a service once. Expected: service opens within ~3 s.
+5. Rapidly click a different service while the first is loading. Expected: service switches cleanly.
+6. Click the already-active service. Expected: no reload (same_service=true in log).
+7. Check that the window stays responsive (can minimise/maximise/drag) throughout.
 
 ---
 

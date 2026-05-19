@@ -7,7 +7,7 @@ src-tauri/src/
 ├── main.rs       — binary entry; calls lib::run()
 ├── lib.rs        — tauri::Builder setup (plugins, state, handler, setup, events)
 ├── state.rs      — AppState { service_view, active_service_id }
-├── commands.rs   — #[tauri::command] fns + AppError + helpers
+├── commands.rs   — #[tauri::command] fns + AppError + helpers + init_service_webview
 ├── scripts.rs    — JS injection string constants
 ├── tray.rs       — system tray construction + menu event handler
 └── shortcuts.rs  — global media key registration
@@ -40,13 +40,16 @@ tokio                    = { version = "1", features = ["time"] }
 
 ```rust
 pub struct AppState {
-    pub service_view: Option<tauri::Webview<tauri::Wry>>,   // current child webview handle
-    pub active_service_id: Option<String>,
+    pub service_view: Option<tauri::Webview<tauri::Wry>>,  // persistent child webview handle
+    pub active_service_id: Option<String>,                  // None when no service is shown
 }
 ```
 
 Stored as `Mutex<AppState>`. Always: lock → take/clone what you need → drop lock → do I/O.
-Never hold the lock across async boundaries or across `add_child`.
+Never hold the lock across async boundaries.
+
+The child webview is created once at startup by `init_service_webview` and lives for the
+entire app lifetime. `service_view` is `None` only until setup completes.
 
 ---
 
@@ -69,38 +72,62 @@ All commands return `Result<T, AppError>`. Tauri serialises errors as `{ message
 
 ---
 
-## IPC commands — current implementation
+## Startup: `init_service_webview(app)` (non-command)
 
-### `open_service(app, state, service_id, url)`
+Called once from `setup` in `lib.rs`. Creates the persistent child webview on the Win32
+main thread during app initialisation — the only safe context for `add_child`.
+
+```rust
+pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
+    // Compute logical size from main window dimensions
+    // Call main.add_child("service-view", about:blank, WEBVIEW_DARK_INIT)
+    // service_view.hide()
+    // Store handle in AppState
+}
+```
+
+The webview loads `about:blank` and is immediately hidden. `open_service` navigates it
+via `eval()` when the user selects a service — no further `add_child` calls ever occur.
+
+**Critical:** Never call `add_child` from a command handler or Tokio thread.
+See `.claude/windows-webview2.md` for full threading model documentation.
+
+---
+
+## IPC commands
+
+### `open_service(state, service_id, url)`
+
+Pure navigation — no COM work, safe from any thread.
 
 1. Parse + validate URL → `AppError::InvalidUrl` on failure.
-2. Lock state → take `old_view` + set `active_service_id` → drop lock.
-3. Close old view outside the lock: `old_view.close()`.
-4. Get main window → compute logical size (subtract 32px titlebar).
-5. Dispatch `add_child` closure to Win32 main thread via `app.run_on_main_thread()`.
-6. Block on `mpsc::channel` until closure reports result.
-7. Lock state again → store new view handle.
+2. Lock state → record `active_service_id`, check `is_same_service`, clone view → drop lock.
+3. If not same service: `v.eval("window.location.href = <url>;")`.
+4. `v.show()` + `v.set_focus()`.
 
-**Critical:** `run_on_main_thread` is mandatory on Windows — see `.claude/windows-webview2.md`.
-**Critical:** Do NOT pass `.data_directory()` to `WebviewBuilder` — see `.claude/windows-webview2.md`.
+Returns `Err("service webview not initialized")` if `init_service_webview` failed at startup.
 
 ### `close_service(state)`
 
-Lock → take view → drop lock → `view.close()`.
+Lock → set `active_service_id = None`, clone view → drop lock → `view.hide()`.
+
+The webview is **hidden, not destroyed.** Next `open_service` navigates the retained handle.
 
 ### `show_service_view(state)` / `hide_service_view(state)`
 
 Lock → clone view handle → drop lock → `view.show()` / `view.hide()`.
+Called when the sidebar flyout opens/closes so the service content isn't visible through
+the backdrop.
 
 ### `resize_service_view(app)` (non-command, called from `on_window_event`)
 
 Called on `WindowEvent::Resized`. Gets main window size, locks state, calls
-`view.set_size()` on the child webview if one exists.
+`view.set_size()` + `view.set_position()` on the child webview if one exists.
 
 ### `dispatch_media_key(app, action)` (non-command, called from tray + shortcuts)
 
-Locks state, reads `active_service_id`, evals `window.__ingweMedia('action')` on the
-child webview.
+Locks state, reads `active_service_id` — returns early if `None` (webview is hidden).
+Evals `window.__ingweMedia('action')` on the child webview.
 
 ---
 
@@ -132,6 +159,7 @@ tauri::Builder::default()
         tray::build_tray(&app.handle())?;
         shortcuts::register_media_shortcuts(&app.handle())?;  // soft-fail on error
         app.get_webview_window("main").map(|w| { w.show(); w.set_focus(); });
+        commands::init_service_webview(&app.handle())?;       // pre-create child webview
         Ok(())
     })
     .on_window_event(|window, event| {
@@ -144,6 +172,9 @@ tauri::Builder::default()
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 ```
+
+`init_service_webview` must come after `w.show()` so the main window HWND is realised
+before `add_child` attaches to it.
 
 ---
 
@@ -173,6 +204,9 @@ printed to stderr with `eprintln!` and setup continues.
 - Overrides `window.matchMedia` so services detect dark mode.
 - Installs `window.__ingweMedia(action)` for media key bridging.
 
+Initialization scripts persist for the webview's lifetime in WebView2 and re-execute on
+every navigation, so dark mode and the media bridge work correctly on each service switch.
+
 `SUSPEND_SCRIPT` / `RESUME_SCRIPT` — available but not yet actively called (future
 background throttling). Suspend freezes timers, mutes audio/video. Resume restores.
 
@@ -183,7 +217,7 @@ background throttling). Suspend freezes timers, mutes audio/video. Resume restor
 `tauri-plugin-log` writes to:
 
 - `stdout` (visible in `npm run tauri dev` terminal).
-- Log file: `{app_data_dir}/ingwe.log`.
+- Log file: `{app_local_data_dir}/logs/Ingwe.log` (Windows: `%LOCALAPPDATA%\com.lazylionconsulting.ingwestream\logs\Ingwe.log`).
 - Level: `Info` in dev, adjust in `lib.rs` `tauri_plugin_log::Builder::new().level()`.
 
 Use only:
@@ -210,8 +244,8 @@ Never `println!` in production code paths.
 }
 ```
 
-Child webview is NOT declared in `tauri.conf.json` — it is created dynamically via
-`Window::add_child()` at runtime.
+Child webview is NOT declared in `tauri.conf.json` — it is created by `init_service_webview`
+in `setup` and lives for the entire app lifetime.
 
 ---
 

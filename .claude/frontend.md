@@ -189,7 +189,7 @@ const toggleFlyout = useServicesStore((s) => s.toggleFlyout);
 
 ```ts
 openService: async (service) => {
-  if (get().isLoading) return;          // ← CRITICAL — prevents Windows WebView2 deadlock
+  if (get().isLoading) return;          // ← prevents double-navigation and UI flicker
   set({ activeId: service.id, flyoutOpen: false, isLoading: true });
   try {
     await invoke("open_service", { serviceId: service.id, url: service.url });
@@ -201,8 +201,8 @@ openService: async (service) => {
 },
 ```
 
-Do NOT remove or reorder the guard. Do NOT add a `useEffect` anywhere that calls
-`openService` without a stable dep array gating it to a single call.
+Do NOT remove or reorder the guard. Do NOT add a `useEffect` that calls `openService`
+without a stable dep array gating it to a single call.
 
 ---
 
