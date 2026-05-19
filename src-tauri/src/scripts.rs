@@ -30,7 +30,32 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
     return result;
   };
 
-  // 4. Media bridge — called by Rust dispatch_media_key
+  // 4. Notification bridge — intercept window.Notification and route to native
+  (function() {
+    if (typeof Notification === 'undefined') return;
+    function IngweNotification(title, opts) {
+      var body = (opts && opts.body) ? String(opts.body) : '';
+      try {
+        fetch(
+          'ingwe-notify://?title=' + encodeURIComponent(String(title)) +
+          '&body=' + encodeURIComponent(body)
+        ).catch(function(){});
+      } catch(_) {}
+    }
+    Object.defineProperty(IngweNotification, 'permission', {
+      get: function() { return 'granted'; },
+      configurable: true
+    });
+    IngweNotification.requestPermission = function() {
+      return Promise.resolve('granted');
+    };
+    IngweNotification.prototype = Object.create(
+      typeof Notification !== 'undefined' ? Notification.prototype : Object.prototype
+    );
+    window.Notification = IngweNotification;
+  })();
+
+  // 5. Media bridge — called by Rust dispatch_media_key
   window.__ingweMedia = function(action) {
     const keyMap = {
       play: 'MediaPlayPause',

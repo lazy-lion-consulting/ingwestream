@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl};
 
 use crate::scripts::WEBVIEW_DARK_INIT;
 use crate::state::AppState;
@@ -14,6 +14,8 @@ pub enum AppError {
     Tauri(String),
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
+    #[error("HTTP error: {0}")]
+    Http(String),
 }
 
 impl From<tauri::Error> for AppError {
@@ -26,10 +28,9 @@ impl From<tauri::Error> for AppError {
 
 /// Create the persistent child webview at app startup.
 ///
-/// Called from `setup` which runs on the Win32 main thread — the only safe
-/// context for `add_child` / WebView2 COM STA initialisation. The webview
-/// loads `about:blank` and is immediately hidden; `open_service` navigates
-/// it via `eval()` with no further COM work required.
+/// Called from `setup` on the Win32 main thread — the only safe context for
+/// `add_child` / WebView2 COM STA initialisation. Registers the `ingwe-notify`
+/// URI scheme so the child page can bridge web Notifications to native.
 pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
     let main = app
         .get_window("main")
@@ -62,12 +63,61 @@ pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
+pub fn handle_notify_protocol(app: &AppHandle, uri: String) {
+    let title = extract_query_param(&uri, "title").unwrap_or_default();
+    let body = extract_query_param(&uri, "body").unwrap_or_default();
+    if title.is_empty() {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title(&title)
+        .body(&body)
+        .show();
+    log::info!("notify: title={title:?}");
+}
+
+fn extract_query_param(uri: &str, key: &str) -> Option<String> {
+    let query = uri.split('?').nth(1)?;
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        if kv.next()? == key {
+            let raw = kv.next().unwrap_or("");
+            return Some(url_decode(raw));
+        }
+    }
+    None
+}
+
+fn url_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
+                16,
+            ) {
+                out.push(byte as char);
+                i += 3;
+                continue;
+            }
+        } else if bytes[i] == b'+' {
+            out.push(' ');
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
 // ── IPC commands ─────────────────────────────────────────────────────────────
 
-/// Navigate the persistent child webview to `url` and show it.
-///
-/// The webview was created in `setup`; this command only needs `eval()` to
-/// change the page, which is async and safe to call from any thread.
 #[tauri::command]
 pub fn open_service(
     state: State<'_, Mutex<AppState>>,
@@ -98,8 +148,6 @@ pub fn open_service(
     Ok(())
 }
 
-/// Hide the active service child webview. The webview is kept alive so the
-/// next `open_service` call can resume or navigate instantly.
 #[tauri::command]
 pub fn close_service(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     let view = {
@@ -109,14 +157,13 @@ pub fn close_service(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> 
     };
 
     if let Some(v) = view {
-        log::info!("close_service: hiding service view (webview retained for reuse)");
+        log::info!("close_service: hiding service view");
         v.hide()?;
     }
 
     Ok(())
 }
 
-/// Show the service child webview — called when the flyout closes.
 #[tauri::command]
 pub fn show_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     let view = {
@@ -132,7 +179,6 @@ pub fn show_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppErr
     Ok(())
 }
 
-/// Hide the service child webview — called when the flyout opens.
 #[tauri::command]
 pub fn hide_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     let view = {
@@ -147,14 +193,66 @@ pub fn hide_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppErr
     Ok(())
 }
 
+#[tauri::command]
+pub fn toggle_fullscreen_layout(
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let new_fullscreen = {
+        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+        s.is_fullscreen = !s.is_fullscreen;
+        s.is_fullscreen
+    };
+    // Webview bounds changes (set_size / set_position) must happen on the Win32
+    // main thread — tauri::command handlers run on Tokio's thread pool.
+    let app_clone = app.clone();
+    if let Some(main) = app.get_webview_window("main") {
+        main.run_on_main_thread(move || resize_service_view(&app_clone))
+            .map_err(|e| AppError::Tauri(e.to_string()))?;
+    }
+    app.emit("fullscreen-changed", new_fullscreen)
+        .map_err(|e| AppError::Tauri(e.to_string()))?;
+    log::info!("toggle_fullscreen_layout: fullscreen={new_fullscreen}");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_window_icon(app: AppHandle, favicon_url: String) -> Result<(), AppError> {
+    let bytes = reqwest::get(&favicon_url)
+        .await
+        .map_err(|e| AppError::Http(e.to_string()))?
+        .bytes()
+        .await
+        .map_err(|e| AppError::Http(e.to_string()))?
+        .to_vec();
+
+    match tauri::image::Image::from_bytes(&bytes) {
+        Ok(img) => {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_icon(img);
+            }
+        }
+        Err(e) => log::warn!("update_window_icon: could not decode favicon: {e}"),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_window_icon(app: AppHandle) -> Result<(), AppError> {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Some(icon) = app.default_window_icon() {
+            w.set_icon(icon.clone())?;
+        }
+    }
+    Ok(())
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Resize the service child webview to fill the main window content area.
-/// Called from the `WindowEvent::Resized` handler in lib.rs.
 pub fn resize_service_view(app: &AppHandle) {
-    let view = if let Some(state) = app.try_state::<Mutex<AppState>>() {
+    let (view, is_fullscreen) = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(s) = state.lock() {
-            s.service_view.clone()
+            (s.service_view.clone(), s.is_fullscreen)
         } else {
             return;
         }
@@ -172,17 +270,18 @@ pub fn resize_service_view(app: &AppHandle) {
     };
 
     let w = inner.width as f64 / scale;
-    let h = (inner.height as f64 / scale) - TITLEBAR_H;
+    let total_h = inner.height as f64 / scale;
 
-    let _ = v.set_size(tauri::Size::Logical(LogicalSize::new(w, h.max(0.0))));
-    let _ = v.set_position(tauri::Position::Logical(LogicalPosition::new(
-        0.0, TITLEBAR_H,
-    )));
+    let (y, h) = if is_fullscreen {
+        (0.0, total_h)
+    } else {
+        (TITLEBAR_H, (total_h - TITLEBAR_H).max(0.0))
+    };
+
+    let _ = v.set_size(tauri::Size::Logical(LogicalSize::new(w, h)));
+    let _ = v.set_position(tauri::Position::Logical(LogicalPosition::new(0.0, y)));
 }
 
-/// Forward a media key action to the active service webview via the injected JS bridge.
-/// Guards on `active_service_id` — the webview persists even when "closed" (hidden),
-/// so we must not dispatch to it unless a service is logically active.
 pub fn dispatch_media_key(app: &AppHandle, action: &str) {
     let view = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(s) = state.lock() {
@@ -202,4 +301,26 @@ pub fn dispatch_media_key(app: &AppHandle, action: &str) {
         let js = format!("if(window.__ingweMedia)window.__ingweMedia('{}');", action);
         let _ = v.eval(&js);
     }
+}
+
+/// Called from F11 shortcut handler — shortcut callbacks also run off the main
+/// thread in Tauri, so we still need run_on_main_thread for the resize.
+pub fn toggle_fullscreen_from_shortcut(app: &AppHandle) {
+    let state = match app.try_state::<Mutex<AppState>>() {
+        Some(s) => s,
+        None => return,
+    };
+    let new_fullscreen = match state.lock() {
+        Ok(mut s) => {
+            s.is_fullscreen = !s.is_fullscreen;
+            s.is_fullscreen
+        }
+        Err(_) => return,
+    };
+    let app_clone = app.clone();
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.run_on_main_thread(move || resize_service_view(&app_clone));
+    }
+    let _ = app.emit("fullscreen-changed", new_fullscreen);
+    log::info!("F11 fullscreen: {new_fullscreen}");
 }

@@ -1,31 +1,22 @@
-import {
-  Disc,
-  Headphones,
-  Music,
-  Play,
-  Radio,
-  Tv2,
-  Waves,
-  type LucideProps,
-} from "lucide-react";
+import { useState } from "react";
+import { Settings, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useServicesStore, SERVICES } from "@/store/services";
+import { useServicesStore, useActiveServices } from "@/store/services";
 import type { ServiceDefinition } from "@/services/serviceRegistry";
 
-// Map icon string → component so Sidebar stays tree-shakeable
-const ICON_MAP: Record<string, React.FC<LucideProps>> = {
-  Disc,
-  Headphones,
-  Music,
-  Play,
-  Radio,
-  Tv2,
-  Waves,
-};
-
-function ServiceIcon({ name, ...props }: { name: string } & LucideProps) {
-  const Icon = ICON_MAP[name] ?? Music;
-  return <Icon {...props} />;
+function ServiceFavicon({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return <Globe className="size-4 shrink-0 text-text-muted" />;
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="size-4 shrink-0 rounded-sm"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function ServiceItem({
@@ -51,10 +42,7 @@ function ServiceItem({
         isLoading && "cursor-not-allowed opacity-60",
       )}
     >
-      <ServiceIcon
-        name={service.icon}
-        className={cn("size-4 shrink-0", isActive ? "text-accent" : "")}
-      />
+      <ServiceFavicon src={service.faviconUrl} alt={service.label} />
       <span className="truncate">{service.label}</span>
     </button>
   );
@@ -63,8 +51,10 @@ function ServiceItem({
 export function Sidebar() {
   const flyoutOpen = useServicesStore((s) => s.flyoutOpen);
   const closeFlyout = useServicesStore((s) => s.closeFlyout);
+  const openWizard = useServicesStore((s) => s.openWizard);
   const activeId = useServicesStore((s) => s.activeId);
   const isLoading = useServicesStore((s) => s.isLoading);
+  const services = useActiveServices();
 
   return (
     <>
@@ -89,7 +79,7 @@ export function Sidebar() {
         )}
       >
         <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-          {SERVICES.map((svc) => (
+          {services.map((svc) => (
             <ServiceItem
               key={svc.id}
               service={svc}
@@ -100,9 +90,16 @@ export function Sidebar() {
         </nav>
 
         <div className="px-3 py-3 border-t border-border-base">
-          <p className="text-[10px] text-text-disabled tracking-widest uppercase">
-            Ingwe
-          </p>
+          <button
+            onClick={() => {
+              closeFlyout();
+              openWizard();
+            }}
+            className="w-full flex items-center gap-2 text-xs text-text-muted hover:text-text-primary transition-colors duration-150 py-1 px-1 rounded"
+          >
+            <Settings className="size-3.5 shrink-0" />
+            <span>Settings</span>
+          </button>
         </div>
       </aside>
     </>

@@ -1,25 +1,40 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { load } from "@tauri-apps/plugin-store";
 import { SERVICES, type ServiceDefinition } from "@/services/serviceRegistry";
 
 interface ServicesState {
-  /** Currently visible service id, or null */
   activeId: string | null;
-  /** Whether the service picker flyout is open */
   flyoutOpen: boolean;
-  /** True while open_service command is in-flight */
   isLoading: boolean;
+  isFullscreen: boolean;
+  wizardOpen: boolean;
+  enabledIds: string[];
+  customServices: ServiceDefinition[];
 
   openService: (service: ServiceDefinition) => Promise<void>;
   closeService: () => Promise<void>;
   toggleFlyout: () => void;
   closeFlyout: () => void;
+  toggleFullscreen: () => Promise<void>;
+  setFullscreen: (value: boolean) => void;
+  openWizard: () => void;
+  closeWizard: () => void;
+  saveServiceConfig: (
+    enabledIds: string[],
+    custom: ServiceDefinition[],
+  ) => Promise<void>;
+  initFromStore: () => Promise<void>;
 }
 
 export const useServicesStore = create<ServicesState>((set, get) => ({
   activeId: null,
   flyoutOpen: false,
-  isLoading: false,
+  isLoading: true,
+  isFullscreen: false,
+  wizardOpen: false,
+  enabledIds: [],
+  customServices: [],
 
   toggleFlyout: () => {
     const { flyoutOpen, activeId } = get();
@@ -43,16 +58,13 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
   },
 
   openService: async (service) => {
-    // Prevent concurrent calls — double-clicks or rapid re-invocations would
-    // queue two add_child closures on the main thread. The first closure's
-    // wait_with_pump nested message loop would then dispatch the second closure
-    // causing a WebView2 reentrancy deadlock (both try to register "service-view").
     if (get().isLoading) return;
-    // Optimistic update: title and loading bar appear immediately.
     set({ activeId: service.id, flyoutOpen: false, isLoading: true });
     try {
       await invoke("open_service", { serviceId: service.id, url: service.url });
-      console.log("[ingwe] open_service succeeded:", service.id);
+      invoke("update_window_icon", { faviconUrl: service.faviconUrl }).catch(
+        () => {},
+      );
     } catch (e) {
       console.error("[ingwe] open_service failed:", e);
     } finally {
@@ -62,8 +74,56 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
 
   closeService: async () => {
     await invoke("close_service");
+    invoke("reset_window_icon").catch(() => {});
     set({ activeId: null });
+  },
+
+  toggleFullscreen: async () => {
+    await invoke("toggle_fullscreen_layout").catch((e) =>
+      console.error("toggle_fullscreen_layout error:", e),
+    );
+  },
+
+  setFullscreen: (value) => set({ isFullscreen: value }),
+
+  openWizard: () => set({ wizardOpen: true }),
+  closeWizard: () => set({ wizardOpen: false }),
+
+  saveServiceConfig: async (enabledIds, custom) => {
+    try {
+      const store = await load("ingwe.json", { defaults: {}, autoSave: true });
+      await store.set("firstRun", false);
+      await store.set("enabledIds", enabledIds);
+      await store.set("customServices", custom);
+    } catch (e) {
+      console.error("[ingwe] saveServiceConfig error:", e);
+    }
+    set({ enabledIds, customServices: custom, wizardOpen: false });
+  },
+
+  initFromStore: async () => {
+    try {
+      const store = await load("ingwe.json", { defaults: {}, autoSave: true });
+      const firstRun = (await store.get<boolean>("firstRun")) ?? true;
+      const storedIds = await store.get<string[]>("enabledIds");
+      const enabledIds = storedIds ?? SERVICES.map((s) => s.id);
+      const customServices =
+        (await store.get<ServiceDefinition[]>("customServices")) ?? [];
+      set({ enabledIds, customServices, wizardOpen: firstRun, isLoading: false });
+    } catch (e) {
+      console.error("[ingwe] initFromStore error:", e);
+      set({ isLoading: false });
+    }
   },
 }));
 
 export { SERVICES };
+
+export function useActiveServices(): ServiceDefinition[] {
+  const enabledIds = useServicesStore((s) => s.enabledIds);
+  const customServices = useServicesStore((s) => s.customServices);
+  return [
+    ...SERVICES.filter((s) => enabledIds.includes(s.id)),
+    ...customServices,
+  ];
+}

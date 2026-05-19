@@ -1,21 +1,29 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LayoutGrid, Minus, Square, X } from "lucide-react";
-import { useServicesStore, SERVICES } from "@/store/services";
+import { LayoutGrid, Minus, Square, X, Expand, Shrink } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useServicesStore, useActiveServices } from "@/store/services";
 
 export function TitleBar() {
   const win = getCurrentWindow();
   const toggleFlyout = useServicesStore((s) => s.toggleFlyout);
+  const toggleFullscreen = useServicesStore((s) => s.toggleFullscreen);
   const activeId = useServicesStore((s) => s.activeId);
   const isLoading = useServicesStore((s) => s.isLoading);
+  const isFullscreen = useServicesStore((s) => s.isFullscreen);
+  const services = useActiveServices();
 
   const activeLabel = activeId
-    ? (SERVICES.find((s) => s.id === activeId)?.label ?? null)
+    ? (services.find((s) => s.id === activeId)?.label ?? null)
     : null;
 
   return (
     <div
       data-tauri-drag-region
-      className="relative h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0"
+      className={cn(
+        "relative h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0",
+        "transition-all duration-150",
+        isFullscreen && "h-0 overflow-hidden opacity-0 pointer-events-none",
+      )}
     >
       {/* Left: menu toggle + app/service name */}
       <div className="flex items-center h-full">
@@ -36,6 +44,17 @@ export function TitleBar() {
 
       {/* Window controls */}
       <div className="flex items-center h-full">
+        <button
+          onClick={toggleFullscreen}
+          className="h-full px-3 flex items-center text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors duration-150"
+          aria-label="Cinema mode"
+        >
+          {isFullscreen ? (
+            <Shrink className="size-3.5" />
+          ) : (
+            <Expand className="size-3.5" />
+          )}
+        </button>
         <button
           onClick={() => win.minimize()}
           className="h-full px-4 flex items-center text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors duration-150"

@@ -27,12 +27,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
+        .register_uri_scheme_protocol("ingwe-notify", |ctx, req| {
+            commands::handle_notify_protocol(ctx.app_handle(), req.uri().to_string());
+            tauri::http::Response::builder()
+                .status(200)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(std::borrow::Cow::Borrowed(b"" as &[u8]))
+                .unwrap()
+        })
         .manage(Mutex::new(AppState::new()))
         .invoke_handler(tauri::generate_handler![
             commands::open_service,
             commands::close_service,
             commands::show_service_view,
             commands::hide_service_view,
+            commands::toggle_fullscreen_layout,
+            commands::update_window_icon,
+            commands::reset_window_icon,
         ])
         .setup(|app| {
             tray::build_tray(&app.handle())?;

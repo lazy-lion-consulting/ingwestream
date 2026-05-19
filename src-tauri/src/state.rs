@@ -1,9 +1,7 @@
-/// Global application state, wrapped in `Mutex<AppState>` and registered via `.manage()`.
 pub struct AppState {
-    /// The persistent child webview created at startup, if any.
     pub service_view: Option<tauri::Webview<tauri::Wry>>,
-    /// The id of the currently active service (None when no service is shown).
     pub active_service_id: Option<String>,
+    pub is_fullscreen: bool,
 }
 
 impl AppState {
@@ -11,6 +9,7 @@ impl AppState {
         Self {
             service_view: None,
             active_service_id: None,
+            is_fullscreen: false,
         }
     }
 }
