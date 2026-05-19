@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Settings, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useServicesStore, useActiveServices } from "@/store/services";
@@ -6,9 +6,7 @@ import type { ServiceDefinition } from "@/services/serviceRegistry";
 
 function ServiceFavicon({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
-  if (failed) {
-    return <Globe className="size-4 shrink-0 text-text-muted" />;
-  }
+  if (failed) return <Globe className="size-4 shrink-0 text-text-muted" />;
   return (
     <img
       src={src}
@@ -54,14 +52,16 @@ export function Sidebar() {
   const openWizard = useServicesStore((s) => s.openWizard);
   const activeId = useServicesStore((s) => s.activeId);
   const isLoading = useServicesStore((s) => s.isLoading);
+  const isFullscreen = useServicesStore((s) => s.isFullscreen);
   const services = useActiveServices();
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Full-screen backdrop — fixed so it covers titlebar area and fullscreen mode */}
       <div
         className={cn(
-          "absolute inset-0 z-20 bg-black/50 transition-opacity duration-200",
+          "fixed inset-0 z-20 bg-black/50 transition-opacity duration-200",
           flyoutOpen
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none",
@@ -69,14 +69,20 @@ export function Sidebar() {
         onClick={closeFlyout}
       />
 
-      {/* Flyout panel */}
+      {/* Flyout panel — fixed, spans full viewport height */}
       <aside
         className={cn(
-          "absolute left-0 top-0 bottom-0 w-52 flex flex-col",
+          "fixed left-0 top-0 h-full w-52 flex flex-col",
           "bg-bg-surface border-r border-border-base z-30",
           "transition-transform duration-200 ease-in-out",
           flyoutOpen ? "translate-x-0" : "-translate-x-full",
         )}
+        onMouseEnter={() => clearTimeout(leaveTimerRef.current)}
+        onMouseLeave={() => {
+          if (isFullscreen) {
+            leaveTimerRef.current = setTimeout(() => closeFlyout(), 600);
+          }
+        }}
       >
         <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
           {services.map((svc) => (

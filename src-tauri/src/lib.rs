@@ -37,6 +37,14 @@ pub fn run() {
                 .body(std::borrow::Cow::Borrowed(b"" as &[u8]))
                 .unwrap()
         })
+        .register_uri_scheme_protocol("ingwe-ctrl", |ctx, req| {
+            commands::handle_ctrl_protocol(ctx.app_handle(), req.uri().to_string());
+            tauri::http::Response::builder()
+                .status(200)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(std::borrow::Cow::Borrowed(b"" as &[u8]))
+                .unwrap()
+        })
         .manage(Mutex::new(AppState::new()))
         .invoke_handler(tauri::generate_handler![
             commands::open_service,
@@ -44,8 +52,10 @@ pub fn run() {
             commands::show_service_view,
             commands::hide_service_view,
             commands::toggle_fullscreen_layout,
+            commands::apply_fullscreen_resize,
             commands::update_window_icon,
             commands::reset_window_icon,
+            commands::show_titlebar_overlay,
         ])
         .setup(|app| {
             tray::build_tray(&app.handle())?;

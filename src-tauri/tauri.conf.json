@@ -18,6 +18,7 @@
         "minWidth": 800,
         "minHeight": 600,
         "decorations": false,
+        "resizable": true,
         "visible": false,
         "devtools": true
       }

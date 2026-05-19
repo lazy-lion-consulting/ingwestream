@@ -2,6 +2,8 @@ pub struct AppState {
     pub service_view: Option<tauri::Webview<tauri::Wry>>,
     pub active_service_id: Option<String>,
     pub is_fullscreen: bool,
+    pub overlay_titlebar: bool,
+    pub overlay_sidebar: bool,
 }
 
 impl AppState {
@@ -10,6 +12,8 @@ impl AppState {
             service_view: None,
             active_service_id: None,
             is_fullscreen: false,
+            overlay_titlebar: false,
+            overlay_sidebar: false,
         }
     }
 }

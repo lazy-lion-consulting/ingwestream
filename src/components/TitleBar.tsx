@@ -3,7 +3,7 @@ import { LayoutGrid, Minus, Square, X, Expand, Shrink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useServicesStore, useActiveServices } from "@/store/services";
 
-export function TitleBar() {
+export function TitleBar({ forceShow = false }: { forceShow?: boolean }) {
   const win = getCurrentWindow();
   const toggleFlyout = useServicesStore((s) => s.toggleFlyout);
   const toggleFullscreen = useServicesStore((s) => s.toggleFullscreen);
@@ -22,7 +22,7 @@ export function TitleBar() {
       className={cn(
         "relative h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0",
         "transition-all duration-150",
-        isFullscreen && "h-0 overflow-hidden opacity-0 pointer-events-none",
+        isFullscreen && !forceShow && "h-0 overflow-hidden opacity-0 pointer-events-none",
       )}
     >
       {/* Left: menu toggle + app/service name */}
@@ -38,7 +38,7 @@ export function TitleBar() {
           data-tauri-drag-region
           className="pl-1 text-xs font-semibold tracking-widest uppercase text-text-muted"
         >
-          {activeLabel ?? "Ingwe"}
+          {activeLabel ?? "IngweStream"}
         </span>
       </div>
 

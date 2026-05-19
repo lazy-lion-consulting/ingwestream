@@ -3,27 +3,20 @@
 pub const WEBVIEW_DARK_INIT: &str = r#"
 (function() {
   // 1. Force dark colour-scheme meta
-  const meta = document.createElement('meta');
+  var meta = document.createElement('meta');
   meta.name = 'color-scheme';
   meta.content = 'dark';
   document.head.appendChild(meta);
 
   // 2. Inject baseline dark styles
-  const style = document.createElement('style');
-  style.textContent = `
-    :root { color-scheme: dark !important; }
-    html, body {
-      background: #000 !important;
-      color: #f0f0f0 !important;
-    }
-    * { transition: background-color 0ms !important; }
-  `;
+  var style = document.createElement('style');
+  style.textContent = ':root{color-scheme:dark!important}html,body{background:#000!important;color:#f0f0f0!important}';
   document.head.appendChild(style);
 
   // 3. Override matchMedia so services detect dark mode
-  const _matchMedia = window.matchMedia.bind(window);
+  var _matchMedia = window.matchMedia.bind(window);
   window.matchMedia = function(q) {
-    const result = _matchMedia(q);
+    var result = _matchMedia(q);
     if (q === '(prefers-color-scheme: dark)') {
       return Object.assign(Object.create(result), result, { matches: true });
     }
@@ -46,34 +39,139 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
       get: function() { return 'granted'; },
       configurable: true
     });
-    IngweNotification.requestPermission = function() {
-      return Promise.resolve('granted');
-    };
+    IngweNotification.requestPermission = function() { return Promise.resolve('granted'); };
     IngweNotification.prototype = Object.create(
       typeof Notification !== 'undefined' ? Notification.prototype : Object.prototype
     );
     window.Notification = IngweNotification;
   })();
 
-  // 5. Media bridge — called by Rust dispatch_media_key
+  // 5. Media bridge — called by Rust dispatch_media_key via eval()
   window.__ingweMedia = function(action) {
-    const keyMap = {
-      play: 'MediaPlayPause',
-      next: 'MediaTrackNext',
-      prev: 'MediaTrackPrevious',
-      stop: 'MediaStop'
-    };
-    const key = keyMap[action];
-    if (!key) return;
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true }));
-    const msHandlers = { play: 'play', next: 'nexttrack', prev: 'previoustrack', stop: 'stop' };
-    try {
-      if (navigator.mediaSession && navigator.mediaSession.playbackState !== 'none') {
-        navigator.mediaSession.callActionHandler &&
-          navigator.mediaSession.callActionHandler(msHandlers[action], null);
+    // Click the first selector that resolves to an element
+    function tryClick(selectors) {
+      for (var i = 0; i < selectors.length; i++) {
+        try { var el = document.querySelector(selectors[i]); if (el) { el.click(); return true; } } catch(_) {}
       }
-    } catch(_) {}
+      return false;
+    }
+    // Dispatch a keydown+keyup pair to activeElement, document, and window
+    function dispatchKey(k) {
+      var opts = { key: k.key, code: k.code, keyCode: k.keyCode, which: k.keyCode, bubbles: true, cancelable: true };
+      [document.activeElement, document, window].forEach(function(t) {
+        if (!t) return;
+        try { t.dispatchEvent(new KeyboardEvent('keydown', opts)); } catch(_) {}
+        try { t.dispatchEvent(new KeyboardEvent('keyup',   opts)); } catch(_) {}
+      });
+    }
+
+    if (action === 'play') {
+      // 1. Direct video/audio element toggle (YouTube, Netflix, Disney+, etc.)
+      var medias = [].slice.call(document.querySelectorAll('video, audio')).filter(function(m) { return !m.error; });
+      var active = medias.filter(function(m) { return !m.paused && !m.ended; })[0]
+                || medias.filter(function(m) { return m.readyState >= 2; })[0]
+                || medias[0];
+      if (active) {
+        try {
+          if (active.paused) active.play().catch(function(){});
+          else active.pause();
+          return;
+        } catch(_) {}
+      }
+      // 2. Click play/pause button (Spotify, Amazon Music, Apple Music, Tidal, Deezer …)
+      if (tryClick([
+        '[data-testid="control-button-playpause"]',          // Spotify
+        '[data-testid="PlayPauseButton"]',                   // Amazon Music
+        '.ytp-play-button',                                  // YouTube embedded player
+        '.play-pause-button',                                // YouTube Music
+        '[aria-label="Pause"]', '[aria-label="Play"]',
+        '[aria-label="Pause video"]', '[aria-label="Play video"]',
+        '[aria-label="Pause song"]',  '[aria-label="Play song"]',
+        '[aria-label="Pause music"]', '[aria-label="Play music"]',
+        'button[title="Pause"]',      'button[title="Play"]',
+        '[class*="PlayPause"]',       '[class*="play-pause"]',
+        '[class*="playPause"]'
+      ])) return;
+      // 3. Keyboard fallback
+      dispatchKey({ key: 'MediaPlayPause', code: 'MediaPlayPause', keyCode: 179 });
+      dispatchKey({ key: ' ', code: 'Space', keyCode: 32 });
+      return;
+    }
+
+    if (action === 'next') {
+      if (tryClick([
+        '[data-testid="control-button-skip-forward"]',       // Spotify
+        'paper-icon-button.next-button',                     // YouTube Music
+        'tp-yt-paper-icon-button.next-button',               // YouTube Music (alt)
+        '.ytp-next-button',                                  // YouTube player
+        '[aria-label="Next song"]',    '[aria-label="Next track"]',
+        '[aria-label="Next video"]',   '[aria-label="Next"]',
+        'button[title="Next song"]',   'button[title="Next track"]',
+        'button[title="Next"]',        '[class*="NextButton"]',
+        '[class*="next-button"]',      '[class*="nextButton"]'
+      ])) return;
+      dispatchKey({ key: 'MediaTrackNext', code: 'MediaTrackNext', keyCode: 176 });
+      return;
+    }
+
+    if (action === 'prev') {
+      if (tryClick([
+        '[data-testid="control-button-skip-back"]',          // Spotify
+        'paper-icon-button.previous-button',                 // YouTube Music
+        'tp-yt-paper-icon-button.previous-button',           // YouTube Music (alt)
+        '[aria-label="Previous song"]','[aria-label="Previous track"]',
+        '[aria-label="Previous video"]','[aria-label="Previous"]',
+        'button[title="Previous song"]','button[title="Previous track"]',
+        'button[title="Previous"]',    '[class*="PrevButton"]',
+        '[class*="prev-button"]',      '[class*="prevButton"]'
+      ])) return;
+      dispatchKey({ key: 'MediaTrackPrevious', code: 'MediaTrackPrevious', keyCode: 177 });
+      return;
+    }
+
+    if (action === 'stop') {
+      dispatchKey({ key: 'MediaStop', code: 'MediaStop', keyCode: 178 });
+    }
   };
+
+  // 7. Physical media key capture — intercepts trusted media key events delivered
+  //    by WebView2/WebKit to the DOM when the service webview has focus, and routes
+  //    them through __ingweMedia so the same logic applies as the tray / shortcuts.
+  window.addEventListener('keydown', function(e) {
+    if (!e.isTrusted || !window.__ingweMedia) return;
+    var map = { 'MediaPlayPause': 'play', 'MediaTrackNext': 'next', 'MediaTrackPrevious': 'prev', 'MediaStop': 'stop' };
+    var a = map[e.key];
+    if (!a) return;
+    e.stopPropagation(); // prevent the service from double-handling
+    e.preventDefault();
+    window.__ingweMedia(a);
+  }, { capture: true });
+
+  // 6. Edge hover / scroll-to-top detection — triggers fullscreen titlebar/sidebar reveal
+  (function() {
+    var atTop  = false;
+    var atLeft = false;
+    function notifyTop(is) {
+      if (is === atTop) return;
+      atTop = is;
+      try { fetch('ingwe-ctrl://?a=' + (is ? 'top-enter' : 'top-leave')).catch(function(){}); } catch(_) {}
+    }
+    function notifyLeft(is) {
+      if (is === atLeft) return;
+      atLeft = is;
+      try { fetch('ingwe-ctrl://?a=' + (is ? 'left-enter' : 'left-leave')).catch(function(){}); } catch(_) {}
+    }
+    window.addEventListener('mousemove', function(e) {
+      notifyTop(e.clientY <= 4);
+      notifyLeft(e.clientX <= 4);
+    }, { passive: true });
+    window.addEventListener('scroll', function() {
+      notifyTop(window.scrollY <= 5);
+    }, { passive: true });
+  })();
+
+  // 8. Diagnostic ping — logs to Rust so we can confirm the init script loaded
+  try { fetch('ingwe-ctrl://?a=script-ready').catch(function(){}); } catch(_) {}
 })();
 "#;
 

@@ -1,10 +1,19 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl};
+use tauri::webview::PageLoadEvent;
 
 use crate::scripts::WEBVIEW_DARK_INIT;
 use crate::state::AppState;
 
 const TITLEBAR_H: f64 = 32.0;
+const SIDEBAR_W:  f64 = 208.0; // Tailwind w-52 = 52×4 px
+
+// Per-action debounce state — prevents key-repeat from skipping multiple tracks.
+static MEDIA_DEBOUNCE: std::sync::OnceLock<Mutex<HashMap<String, Instant>>> =
+    std::sync::OnceLock::new();
+const DEBOUNCE_MS: u64 = 300;
 
 #[derive(Debug, thiserror::Error, serde::Serialize)]
 pub enum AppError {
@@ -26,11 +35,6 @@ impl From<tauri::Error> for AppError {
 
 // ── Startup initialisation ────────────────────────────────────────────────────
 
-/// Create the persistent child webview at app startup.
-///
-/// Called from `setup` on the Win32 main thread — the only safe context for
-/// `add_child` / WebView2 COM STA initialisation. Registers the `ingwe-notify`
-/// URI scheme so the child page can bridge web Notifications to native.
 pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
     let main = app
         .get_window("main")
@@ -45,10 +49,31 @@ pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
         .parse::<tauri::Url>()
         .map_err(|e| AppError::InvalidUrl(e.to_string()))?;
 
+    // Belt-and-suspenders injection: initialization_script may silently fail for
+    // child webviews on Windows/WebView2, so on_page_load re-injects on every
+    // page load completion.  The guard prevents double-injection when both run.
+    let inject_js = format!(
+        "if(!window.__ingweMediaInjected){{window.__ingweMediaInjected=true;{}}}",
+        WEBVIEW_DARK_INIT
+    );
+
     log::info!("init_service_webview: creating child webview logical_size={w:.0}x{h:.0}");
     let service_view = main.add_child(
         WebviewBuilder::new("service-view", WebviewUrl::External(blank_url))
-            .initialization_script(WEBVIEW_DARK_INIT),
+            .initialization_script(WEBVIEW_DARK_INIT)
+            .on_page_load(move |webview, payload| {
+                if payload.event() == PageLoadEvent::Finished {
+                    // Skip blank / internal pages
+                    let url = payload.url().as_str();
+                    if !url.starts_with("about:") && !url.starts_with("data:") {
+                        if let Err(e) = webview.eval(&inject_js) {
+                            log::warn!("on_page_load: inject failed: {e}");
+                        } else {
+                            log::info!("on_page_load: injected media bridge for {url}");
+                        }
+                    }
+                }
+            }),
         LogicalPosition::new(0.0, TITLEBAR_H),
         LogicalSize::new(w, h.max(0.0)),
     )?;
@@ -61,6 +86,31 @@ pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
     let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
     s.service_view = Some(service_view);
     Ok(())
+}
+
+// ── URI scheme handlers ───────────────────────────────────────────────────────
+
+pub fn handle_ctrl_protocol(app: &AppHandle, uri: String) {
+    let a = match extract_query_param(&uri, "a") {
+        Some(v) => v,
+        None => return,
+    };
+    let state = match app.try_state::<Mutex<AppState>>() {
+        Some(s) => s,
+        None => return,
+    };
+    let is_fullscreen = state.lock().map(|s| s.is_fullscreen).unwrap_or(false);
+    if !is_fullscreen {
+        return;
+    }
+    match a.as_str() {
+        "top-enter" | "1" => { let _ = app.emit("edge-enter", ()); }
+        "top-leave" | "0" => { let _ = app.emit("edge-leave", ()); }
+        "left-enter"      => { let _ = app.emit("edge-left-enter", ()); }
+        "left-leave"      => { let _ = app.emit("edge-left-leave", ()); }
+        "script-ready"    => { log::info!("service webview init script loaded"); }
+        _ => {}
+    }
 }
 
 pub fn handle_notify_protocol(app: &AppHandle, uri: String) {
@@ -132,6 +182,8 @@ pub fn open_service(
         let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
         let same = s.active_service_id.as_deref() == Some(service_id.as_str());
         s.active_service_id = Some(service_id.clone());
+        // Clear sidebar overlay when a service is selected
+        s.overlay_sidebar = false;
         (s.service_view.clone(), same)
     };
 
@@ -160,7 +212,6 @@ pub fn close_service(state: State<'_, Mutex<AppState>>) -> Result<(), AppError> 
         log::info!("close_service: hiding service view");
         v.hide()?;
     }
-
     Ok(())
 }
 
@@ -170,12 +221,10 @@ pub fn show_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppErr
         let s = state.lock().map_err(|_| AppError::StatePoisoned)?;
         s.service_view.clone()
     };
-
     if let Some(v) = view {
         v.show()?;
         v.set_focus()?;
     }
-
     Ok(())
 }
 
@@ -185,11 +234,9 @@ pub fn hide_service_view(state: State<'_, Mutex<AppState>>) -> Result<(), AppErr
         let s = state.lock().map_err(|_| AppError::StatePoisoned)?;
         s.service_view.clone()
     };
-
     if let Some(v) = view {
         v.hide()?;
     }
-
     Ok(())
 }
 
@@ -201,18 +248,58 @@ pub fn toggle_fullscreen_layout(
     let new_fullscreen = {
         let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
         s.is_fullscreen = !s.is_fullscreen;
+        // Clear overlay state on any fullscreen toggle
+        s.overlay_titlebar = false;
+        s.overlay_sidebar = false;
         s.is_fullscreen
     };
-    // Webview bounds changes (set_size / set_position) must happen on the Win32
-    // main thread — tauri::command handlers run on Tokio's thread pool.
+
+    // Attempt resize directly — wry may handle thread dispatch internally.
+    // Also queue via run_on_main_thread as belt-and-suspenders.
+    apply_resize_all(&app);
     let app_clone = app.clone();
     if let Some(main) = app.get_webview_window("main") {
-        main.run_on_main_thread(move || resize_service_view(&app_clone))
-            .map_err(|e| AppError::Tauri(e.to_string()))?;
+        let _ = main.run_on_main_thread(move || apply_resize_all(&app_clone));
     }
+
     app.emit("fullscreen-changed", new_fullscreen)
         .map_err(|e| AppError::Tauri(e.to_string()))?;
     log::info!("toggle_fullscreen_layout: fullscreen={new_fullscreen}");
+    Ok(())
+}
+
+/// Called from React after fullscreen-changed is processed, to ensure resize
+/// is applied even if the initial run_on_main_thread was too early.
+#[tauri::command]
+pub fn apply_fullscreen_resize(app: AppHandle) -> Result<(), AppError> {
+    apply_resize_all(&app);
+    let app_clone = app.clone();
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.run_on_main_thread(move || apply_resize_all(&app_clone));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_titlebar_overlay(
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+    visible: bool,
+) -> Result<(), AppError> {
+    {
+        let mut s = state.lock().map_err(|_| AppError::StatePoisoned)?;
+        if !s.is_fullscreen {
+            return Ok(());
+        }
+        s.overlay_titlebar = visible;
+    }
+    apply_resize_all(&app);
+    let app_clone = app.clone();
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.run_on_main_thread(move || apply_resize_all(&app_clone));
+    }
+    app.emit("overlay-changed", visible)
+        .map_err(|e| AppError::Tauri(e.to_string()))?;
     Ok(())
 }
 
@@ -249,40 +336,60 @@ pub fn reset_window_icon(app: AppHandle) -> Result<(), AppError> {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-pub fn resize_service_view(app: &AppHandle) {
-    let (view, is_fullscreen) = if let Some(state) = app.try_state::<Mutex<AppState>>() {
-        if let Ok(s) = state.lock() {
-            (s.service_view.clone(), s.is_fullscreen)
+/// Unified resize: positions the service view based on all overlay flags.
+/// Safe to call from any thread; called both directly and via run_on_main_thread.
+pub fn apply_resize_all(app: &AppHandle) {
+    let (view, is_fullscreen, ov_tb, ov_sb) =
+        if let Some(state) = app.try_state::<Mutex<AppState>>() {
+            if let Ok(s) = state.lock() {
+                (s.service_view.clone(), s.is_fullscreen, s.overlay_titlebar, s.overlay_sidebar)
+            } else {
+                return;
+            }
         } else {
             return;
-        }
-    } else {
-        return;
-    };
+        };
 
     let Some(v) = view else { return };
-    let Some(main) = app.get_window("main") else {
-        return;
-    };
+    let Some(main) = app.get_window("main") else { return };
     let Ok(inner) = main.inner_size() else { return };
-    let Ok(scale) = main.scale_factor() else {
-        return;
-    };
+    let Ok(scale) = main.scale_factor() else { return };
 
     let w = inner.width as f64 / scale;
     let total_h = inner.height as f64 / scale;
 
-    let (y, h) = if is_fullscreen {
-        (0.0, total_h)
+    let (x, y, vw, vh) = if is_fullscreen {
+        let x = if ov_sb { SIDEBAR_W } else { 0.0 };
+        let y = if ov_tb { TITLEBAR_H } else { 0.0 };
+        (x, y, (w - x).max(0.0), (total_h - y).max(0.0))
     } else {
-        (TITLEBAR_H, (total_h - TITLEBAR_H).max(0.0))
+        (0.0, TITLEBAR_H, w, (total_h - TITLEBAR_H).max(0.0))
     };
 
-    let _ = v.set_size(tauri::Size::Logical(LogicalSize::new(w, h)));
-    let _ = v.set_position(tauri::Position::Logical(LogicalPosition::new(0.0, y)));
+    let _ = v.set_size(tauri::Size::Logical(LogicalSize::new(vw, vh)));
+    let _ = v.set_position(tauri::Position::Logical(LogicalPosition::new(x, y)));
+}
+
+/// Kept as a public alias so `on_window_event` and shortcut code can call it.
+pub fn resize_service_view(app: &AppHandle) {
+    apply_resize_all(app);
 }
 
 pub fn dispatch_media_key(app: &AppHandle, action: &str) {
+    // Debounce: key-repeat on Windows fires RegisterHotKey many times per second.
+    {
+        let map = MEDIA_DEBOUNCE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Ok(mut m) = map.lock() {
+            let now = Instant::now();
+            if let Some(last) = m.get(action) {
+                if now.duration_since(*last) < Duration::from_millis(DEBOUNCE_MS) {
+                    return;
+                }
+            }
+            m.insert(action.to_string(), now);
+        }
+    }
+
     let view = if let Some(state) = app.try_state::<Mutex<AppState>>() {
         if let Ok(s) = state.lock() {
             if s.active_service_id.is_some() {
@@ -299,12 +406,15 @@ pub fn dispatch_media_key(app: &AppHandle, action: &str) {
 
     if let Some(v) = view {
         let js = format!("if(window.__ingweMedia)window.__ingweMedia('{}');", action);
-        let _ = v.eval(&js);
+        match v.eval(&js) {
+            Ok(_)  => log::info!("dispatch_media_key: eval ok action={action}"),
+            Err(e) => log::warn!("dispatch_media_key: eval failed action={action}: {e}"),
+        }
+    } else {
+        log::warn!("dispatch_media_key: no active service for action={action}");
     }
 }
 
-/// Called from F11 shortcut handler — shortcut callbacks also run off the main
-/// thread in Tauri, so we still need run_on_main_thread for the resize.
 pub fn toggle_fullscreen_from_shortcut(app: &AppHandle) {
     let state = match app.try_state::<Mutex<AppState>>() {
         Some(s) => s,
@@ -313,13 +423,16 @@ pub fn toggle_fullscreen_from_shortcut(app: &AppHandle) {
     let new_fullscreen = match state.lock() {
         Ok(mut s) => {
             s.is_fullscreen = !s.is_fullscreen;
+            s.overlay_titlebar = false;
+            s.overlay_sidebar = false;
             s.is_fullscreen
         }
         Err(_) => return,
     };
+    apply_resize_all(app);
     let app_clone = app.clone();
     if let Some(main) = app.get_webview_window("main") {
-        let _ = main.run_on_main_thread(move || resize_service_view(&app_clone));
+        let _ = main.run_on_main_thread(move || apply_resize_all(&app_clone));
     }
     let _ = app.emit("fullscreen-changed", new_fullscreen);
     log::info!("F11 fullscreen: {new_fullscreen}");

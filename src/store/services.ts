@@ -14,6 +14,7 @@ interface ServicesState {
 
   openService: (service: ServiceDefinition) => Promise<void>;
   closeService: () => Promise<void>;
+  openFlyout: () => void;
   toggleFlyout: () => void;
   closeFlyout: () => void;
   toggleFullscreen: () => Promise<void>;
@@ -35,6 +36,17 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
   wizardOpen: false,
   enabledIds: [],
   customServices: [],
+
+  openFlyout: () => {
+    const { flyoutOpen, activeId } = get();
+    if (flyoutOpen) return;
+    set({ flyoutOpen: true });
+    if (activeId) {
+      invoke("hide_service_view").catch((e) =>
+        console.error("hide_service_view error:", e),
+      );
+    }
+  },
 
   toggleFlyout: () => {
     const { flyoutOpen, activeId } = get();

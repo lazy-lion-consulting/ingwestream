@@ -4,11 +4,6 @@ import { cn } from "@/lib/utils";
 import { useServicesStore } from "@/store/services";
 import { SERVICES, type ServiceDefinition } from "@/services/serviceRegistry";
 
-const VIDEO_IDS = new Set([
-  "netflix", "disney-plus", "prime-video", "hulu", "max",
-  "peacock", "paramount-plus", "apple-tv", "crunchyroll", "twitch",
-]);
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function faviconFromUrl(raw: string): string {
@@ -25,16 +20,21 @@ function normaliseUrl(raw: string): string {
   return /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
 }
 
+function sortByLabel(a: ServiceDefinition, b: ServiceDefinition) {
+  return a.label.localeCompare(b.label);
+}
+
 // ── Favicon image with Globe fallback ─────────────────────────────────────────
 
 function FaviconImg({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) return <Globe className="size-8 text-text-disabled" />;
+  if (!src || failed)
+    return <Globe className="size-6 text-text-disabled shrink-0" />;
   return (
     <img
       src={src}
       alt={alt}
-      className="size-8"
+      className="size-6 shrink-0"
       onError={() => setFailed(true)}
     />
   );
@@ -44,11 +44,15 @@ function FaviconImg({ src, alt }: { src: string; alt: string }) {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] text-text-disabled tracking-widest uppercase mb-3 px-0.5">
+    <p className="text-[10px] text-text-disabled tracking-widest uppercase mb-2 px-0.5">
       {children}
     </p>
   );
 }
+
+// ── Square card grid ──────────────────────────────────────────────────────────
+
+const GRID = "grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2";
 
 // ── Predefined service card ───────────────────────────────────────────────────
 
@@ -66,22 +70,22 @@ function ServiceCard({
       onClick={onToggle}
       title={service.label}
       className={cn(
-        "relative flex flex-col items-center gap-2.5 p-3 rounded-xl border-2",
-        "transition-all duration-150 cursor-pointer focus-visible:outline-none",
+        "relative aspect-square flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border-2",
+        "transition-all duration-150 cursor-pointer focus-visible:outline-none w-full",
         selected
           ? "border-accent bg-accent-dim"
           : "border-border-base bg-bg-elevated hover:border-border-strong hover:bg-bg-overlay",
       )}
     >
       {selected && (
-        <span className="absolute top-1.5 right-1.5 flex items-center justify-center size-4 rounded-full bg-accent">
-          <Check className="size-2.5 text-white" strokeWidth={3} />
+        <span className="absolute top-1.5 right-1.5 flex items-center justify-center size-3.5 rounded-full bg-accent">
+          <Check className="size-2 text-white" strokeWidth={3} />
         </span>
       )}
       <FaviconImg src={service.faviconUrl} alt={service.label} />
       <span
         className={cn(
-          "text-[11px] font-medium text-center leading-tight w-full truncate",
+          "text-[10px] font-medium text-center leading-tight w-full truncate px-0.5",
           selected ? "text-text-primary" : "text-text-muted",
         )}
       >
@@ -91,7 +95,7 @@ function ServiceCard({
   );
 }
 
-// ── Custom service card (same format + hover toolbar) ─────────────────────────
+// ── Custom service card (same square format + hover toolbar) ──────────────────
 
 function CustomServiceCard({
   service,
@@ -110,12 +114,11 @@ function CustomServiceCard({
 }) {
   return (
     <div className="relative group">
-      {/* Main card — same visual as ServiceCard */}
       <button
         onClick={onToggle}
         title={service.label}
         className={cn(
-          "relative w-full flex flex-col items-center gap-2.5 p-3 rounded-xl border-2",
+          "relative aspect-square w-full flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl border-2",
           "transition-all duration-150 cursor-pointer focus-visible:outline-none",
           isEditing && "ring-2 ring-offset-1 ring-offset-bg-base ring-accent",
           selected
@@ -124,14 +127,14 @@ function CustomServiceCard({
         )}
       >
         {selected && (
-          <span className="absolute top-1.5 right-1.5 flex items-center justify-center size-4 rounded-full bg-accent">
-            <Check className="size-2.5 text-white" strokeWidth={3} />
+          <span className="absolute top-1.5 right-1.5 flex items-center justify-center size-3.5 rounded-full bg-accent">
+            <Check className="size-2 text-white" strokeWidth={3} />
           </span>
         )}
         <FaviconImg src={service.faviconUrl} alt={service.label} />
         <span
           className={cn(
-            "text-[11px] font-medium text-center leading-tight w-full truncate",
+            "text-[10px] font-medium text-center leading-tight w-full truncate px-0.5",
             selected ? "text-text-primary" : "text-text-muted",
           )}
         >
@@ -139,7 +142,7 @@ function CustomServiceCard({
         </span>
       </button>
 
-      {/* Hover toolbar — overlaid at the bottom of the card */}
+      {/* Hover toolbar */}
       <div
         className={cn(
           "absolute inset-x-0 bottom-0 flex items-center justify-center gap-0.5 py-1 px-1 rounded-b-xl",
@@ -149,10 +152,7 @@ function CustomServiceCard({
         )}
       >
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
+          onClick={(e) => { e.stopPropagation(); onEdit(); }}
           className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-text-muted hover:text-text-primary hover:bg-bg-overlay transition-colors duration-150"
         >
           <Pencil className="size-2.5" />
@@ -160,10 +160,7 @@ function CustomServiceCard({
         </button>
         <div className="w-px h-3 bg-border-base shrink-0" />
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-text-muted hover:text-danger hover:bg-bg-overlay transition-colors duration-150"
         >
           <Trash2 className="size-2.5" />
@@ -194,20 +191,13 @@ function EditPanel({
 }) {
   return (
     <div className="mt-2 flex items-center gap-2 p-3 bg-bg-elevated rounded-xl border border-border-strong">
-      {/* Live favicon preview */}
       <div className="size-7 flex items-center justify-center shrink-0">
         {faviconPreview ? (
-          <img
-            src={faviconPreview}
-            alt=""
-            className="size-6"
-            onError={() => {}}
-          />
+          <img src={faviconPreview} alt="" className="size-6" onError={() => {}} />
         ) : (
           <Globe className="size-5 text-text-disabled" />
         )}
       </div>
-
       <input
         type="url"
         value={editUrl}
@@ -247,57 +237,38 @@ export function ServiceWizard() {
   const { enabledIds, customServices, saveServiceConfig, closeWizard, wizardOpen } =
     useServicesStore();
 
-  // Predefined toggle state
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    new Set(enabledIds),
-  );
-
-  // Custom service list (all added services, incl. unselected)
-  const [pendingCustom, setPendingCustom] = useState<ServiceDefinition[]>(
-    customServices,
-  );
-  // Which custom services are toggled on
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(enabledIds));
+  const [pendingCustom, setPendingCustom] = useState<ServiceDefinition[]>(customServices);
   const [selectedCustomIds, setSelectedCustomIds] = useState<Set<string>>(
     new Set(customServices.map((s) => s.id)),
   );
 
-  // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editUrl, setEditUrl] = useState("");
   const [editLabel, setEditLabel] = useState("");
 
-  // New service form
   const [customUrl, setCustomUrl] = useState("");
   const [customLabel, setCustomLabel] = useState("");
   const [urlError, setUrlError] = useState("");
 
   const totalSelected = selectedIds.size + selectedCustomIds.size;
   const canClose = enabledIds.length > 0 || customServices.length > 0;
-
-  // Live favicon preview for the edit panel
   const editFaviconPreview = faviconFromUrl(editUrl);
 
-  // ── Predefined toggle ───────────────────────────────────────────────────────
-  const toggle = (id: string) => {
+  const toggle = (id: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
 
-  // ── Custom toggle ───────────────────────────────────────────────────────────
-  const toggleCustom = (id: string) => {
+  const toggleCustom = (id: string) =>
     setSelectedCustomIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
 
-  // ── Custom delete ───────────────────────────────────────────────────────────
   const deleteCustom = (id: string) => {
     setPendingCustom((p) => p.filter((s) => s.id !== id));
     setSelectedCustomIds((prev) => {
@@ -308,7 +279,6 @@ export function ServiceWizard() {
     if (editingId === id) cancelEdit();
   };
 
-  // ── Custom edit ─────────────────────────────────────────────────────────────
   const startEdit = (svc: ServiceDefinition) => {
     setEditingId(svc.id);
     setEditUrl(svc.url);
@@ -347,18 +317,16 @@ export function ServiceWizard() {
     }
   };
 
-  // ── Add new custom service ──────────────────────────────────────────────────
   const buildCustomService = (): ServiceDefinition | null => {
-    const raw = normaliseUrl(customUrl);
     if (!customUrl.trim()) return null;
+    const raw = normaliseUrl(customUrl);
     try {
       const { hostname } = new URL(raw);
       const label =
         customLabel.trim() ||
         hostname.replace(/^www\./, "").split(".")[0].replace(/-/g, " ");
-      const id = `custom-${hostname.replace(/\./g, "-")}-${Date.now()}`;
       return {
-        id,
+        id: `custom-${hostname.replace(/\./g, "-")}-${Date.now()}`,
         label: label.charAt(0).toUpperCase() + label.slice(1),
         url: raw,
         faviconUrl: `https://icons.duckduckgo.com/ip3/${hostname}.ico`,
@@ -382,17 +350,14 @@ export function ServiceWizard() {
     setCustomLabel("");
   };
 
-  // ── Save ────────────────────────────────────────────────────────────────────
   const save = () => {
     if (totalSelected === 0) return;
-    // Only persist custom services that are currently toggled on
     const activeCustom = pendingCustom.filter((s) => selectedCustomIds.has(s.id));
     saveServiceConfig(Array.from(selectedIds), activeCustom);
   };
 
-  // ── Derived lists ───────────────────────────────────────────────────────────
-  const videoServices = SERVICES.filter((s) => VIDEO_IDS.has(s.id));
-  const musicServices = SERVICES.filter((s) => !VIDEO_IDS.has(s.id));
+  const videoServices = SERVICES.filter((s) => s.category === "video").sort(sortByLabel);
+  const musicServices = SERVICES.filter((s) => s.category === "music").sort(sortByLabel);
 
   if (!wizardOpen) return null;
 
@@ -425,7 +390,7 @@ export function ServiceWizard() {
         {/* Video */}
         <div className="mb-6">
           <SectionLabel>Video streaming</SectionLabel>
-          <div className="grid grid-cols-5 gap-2">
+          <div className={GRID}>
             {videoServices.map((svc) => (
               <ServiceCard
                 key={svc.id}
@@ -440,7 +405,7 @@ export function ServiceWizard() {
         {/* Music */}
         <div className="mb-6">
           <SectionLabel>Music streaming</SectionLabel>
-          <div className="grid grid-cols-5 gap-2">
+          <div className={GRID}>
             {musicServices.map((svc) => (
               <ServiceCard
                 key={svc.id}
@@ -456,10 +421,9 @@ export function ServiceWizard() {
         <div>
           <SectionLabel>Custom services</SectionLabel>
 
-          {/* Custom service cards — same grid format as predefined */}
           {pendingCustom.length > 0 && (
             <div className="mb-3">
-              <div className="grid grid-cols-5 gap-2">
+              <div className={GRID}>
                 {pendingCustom.map((svc) => (
                   <CustomServiceCard
                     key={svc.id}
@@ -473,7 +437,6 @@ export function ServiceWizard() {
                 ))}
               </div>
 
-              {/* Inline edit panel — shown below the grid when a card is being edited */}
               {editingId && (
                 <EditPanel
                   editUrl={editUrl}
@@ -493,10 +456,7 @@ export function ServiceWizard() {
             <input
               type="url"
               value={customUrl}
-              onChange={(e) => {
-                setCustomUrl(e.target.value);
-                setUrlError("");
-              }}
+              onChange={(e) => { setCustomUrl(e.target.value); setUrlError(""); }}
               onKeyDown={(e) => e.key === "Enter" && addCustom()}
               placeholder="https://example.com"
               className={cn(
@@ -521,9 +481,7 @@ export function ServiceWizard() {
               Add
             </button>
           </div>
-          {urlError && (
-            <p className="text-xs text-danger mt-1.5">{urlError}</p>
-          )}
+          {urlError && <p className="text-xs text-danger mt-1.5">{urlError}</p>}
         </div>
       </div>
 

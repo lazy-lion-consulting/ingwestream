@@ -1,41 +1,60 @@
+use std::panic::{self, AssertUnwindSafe};
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::commands::{dispatch_media_key, toggle_fullscreen_from_shortcut};
 
 pub fn register_media_shortcuts(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // Media keys — registered as a group; all must succeed together
-    let handle = app.clone();
-    app.global_shortcut().on_shortcuts(
-        [
-            "MediaPlayPause",
-            "MediaTrackNext",
-            "MediaTrackPrevious",
-            "MediaStop",
-        ],
-        move |_app, shortcut, event| {
-            if event.state() != ShortcutState::Pressed {
-                return;
-            }
-            match shortcut.key.to_string().as_str() {
-                "MediaPlayPause" => dispatch_media_key(&handle, "play"),
-                "MediaTrackNext" => dispatch_media_key(&handle, "next"),
-                "MediaTrackPrevious" => dispatch_media_key(&handle, "prev"),
-                "MediaStop" => dispatch_media_key(&handle, "stop"),
-                _ => {}
-            }
-        },
-    )?;
+    log::info!("register_media_shortcuts: starting");
 
-    // F11 for cinema-mode toggle — registered separately so a failure here
-    // never prevents media keys from working
-    let handle2 = app.clone();
-    if let Err(e) = app.global_shortcut().on_shortcut("F11", move |_app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            toggle_fullscreen_from_shortcut(&handle2);
+    let media_keys: &[(&str, &str)] = &[
+        ("MediaPlayPause", "play"),
+        ("MediaTrackNext", "next"),
+        ("MediaTrackPrevious", "prev"),
+        ("MediaStop", "stop"),
+    ];
+
+    let mut registered = 0usize;
+    for &(key, action) in media_keys {
+        log::info!("register_media_shortcuts: attempting {key}");
+        let handle = app.clone();
+        let action_str = action.to_string();
+
+        // Wrap in catch_unwind — on Linux/WSLg the X11 key-grab can panic when
+        // the desktop environment has already claimed the media keys.
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            app.global_shortcut().on_shortcut(key, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    dispatch_media_key(&handle, &action_str);
+                }
+            })
+        }));
+
+        match result {
+            Ok(Ok(_)) => {
+                registered += 1;
+                log::info!("register_media_shortcuts: registered {key}");
+            }
+            Ok(Err(e)) => log::warn!("register_media_shortcuts: could not register {key}: {e}"),
+            Err(_) => log::warn!("register_media_shortcuts: {key} panicked during registration (likely grabbed by DE)"),
         }
-    }) {
-        log::warn!("F11 global shortcut unavailable (cinema exit via button only): {e}");
+    }
+
+    log::info!("register_media_shortcuts: {registered}/{} registered via global shortcut", media_keys.len());
+
+    log::info!("register_media_shortcuts: attempting F11");
+    let handle2 = app.clone();
+    let f11_result = panic::catch_unwind(AssertUnwindSafe(|| {
+        app.global_shortcut().on_shortcut("F11", move |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                toggle_fullscreen_from_shortcut(&handle2);
+            }
+        })
+    }));
+    match f11_result {
+        Ok(Ok(_)) => log::info!("register_media_shortcuts: registered F11"),
+        Ok(Err(e)) => log::warn!("register_media_shortcuts: F11 unavailable: {e}"),
+        Err(_) => log::warn!("register_media_shortcuts: F11 panicked during registration"),
     }
 
     Ok(())
