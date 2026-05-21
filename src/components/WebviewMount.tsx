@@ -6,13 +6,18 @@ import type { ServiceDefinition } from "@/services/serviceRegistry";
 
 export function WebviewMount() {
   const activeId = useServicesStore((s) => s.activeId);
+  const flyoutOpen = useServicesStore((s) => s.flyoutOpen);
 
   return (
-    <div className="relative flex-1 overflow-hidden bg-bg-base">
-      {activeId ? (
-        <div id={`webview-mount-${activeId}`} className="absolute inset-0" />
-      ) : (
+    <div className="absolute inset-0 bg-bg-base">
+      {!activeId ? (
         <ServiceLauncher />
+      ) : flyoutOpen ? (
+        // Native webview is hidden while flyout is open — show a placeholder so
+        // the content area isn't just a black void behind the sidebar backdrop.
+        <ServicePause activeId={activeId} />
+      ) : (
+        <div id={`webview-mount-${activeId}`} className="absolute inset-0" />
       )}
     </div>
   );
@@ -28,6 +33,25 @@ function ServiceFavicon({ src, alt }: { src: string; alt: string }) {
       className="size-5 shrink-0 rounded-sm"
       onError={() => setFailed(true)}
     />
+  );
+}
+
+function ServicePause({ activeId }: { activeId: string }) {
+  const services = useActiveServices();
+  const service = services.find((s) => s.id === activeId);
+
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg-base">
+      {service && (
+        <>
+          <ServiceFavicon src={service.faviconUrl} alt={service.label} />
+          <p className="text-sm text-text-secondary">{service.label}</p>
+        </>
+      )}
+      <p className="text-xs text-text-disabled tracking-widest uppercase">
+        Paused
+      </p>
+    </div>
   );
 }
 

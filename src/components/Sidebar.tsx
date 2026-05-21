@@ -58,10 +58,11 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Backdrop — starts below titlebar in normal mode, full-height in fullscreen */}
+      {/* Click-capture overlay — closes flyout when clicking outside the panel.
+          No fill colour: bg-base is already dark, any overlay just blacks it out. */}
       <div
         className={cn(
-          "fixed inset-x-0 bottom-0 z-20 bg-black/50 transition-opacity duration-200",
+          "fixed inset-x-0 bottom-0 z-20 transition-opacity duration-200",
           isFullscreen ? "top-0" : "top-8",
           flyoutOpen
             ? "opacity-100 pointer-events-auto"
@@ -99,10 +100,7 @@ export function Sidebar() {
 
         <div className="px-3 py-3 border-t border-border-base">
           <button
-            onClick={() => {
-              closeFlyout();
-              openWizard();
-            }}
+            onClick={() => openWizard()}
             className="w-full flex items-center gap-2 text-xs text-text-muted hover:text-text-primary transition-colors duration-150 py-1 px-1 rounded"
           >
             <Settings className="size-3.5 shrink-0" />

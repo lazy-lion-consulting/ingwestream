@@ -80,7 +80,8 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
     // excluding document.activeElement to avoid misinterpretation by focused containers
     // (e.g. YTM queue panel treating MediaTrackNext as a scroll command)
     function dispatchKey(k) {
-      var opts = { key: k.key, code: k.code, keyCode: k.keyCode, which: k.keyCode, bubbles: true, cancelable: true };
+      var opts = { key: k.key, code: k.code, keyCode: k.keyCode, which: k.keyCode,
+                   shiftKey: !!k.shiftKey, bubbles: true, cancelable: true };
       [document, window].forEach(function(t) {
         if (!t) return;
         try { t.dispatchEvent(new KeyboardEvent('keydown', opts)); } catch(_) {}
@@ -163,6 +164,8 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
         'tp-yt-paper-icon-button.next-button', '.next-button',
         '[aria-label="Next"]', '[aria-label="Next song"]', '[title="Next"]'
       ])) return;
+      // YTM keyboard shortcut (Shift+N) — works even when media key events are untrusted
+      dispatchKey({ key: 'N', code: 'KeyN', keyCode: 78, shiftKey: true });
       dispatchKey({ key: 'MediaTrackNext', code: 'MediaTrackNext', keyCode: 176 });
       return;
     }
@@ -183,6 +186,8 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
         'tp-yt-paper-icon-button.previous-button', '.previous-button',
         '[aria-label="Previous"]', '[aria-label="Previous song"]', '[title="Previous"]'
       ])) return;
+      // YTM keyboard shortcut (Shift+P) — works even when media key events are untrusted
+      dispatchKey({ key: 'P', code: 'KeyP', keyCode: 80, shiftKey: true });
       dispatchKey({ key: 'MediaTrackPrevious', code: 'MediaTrackPrevious', keyCode: 177 });
       return;
     }

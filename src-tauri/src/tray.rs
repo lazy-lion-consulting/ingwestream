@@ -31,6 +31,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             {
                 let app = tray.app_handle();
                 if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.unminimize();
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
@@ -45,6 +46,7 @@ fn tray_menu_handler(app: &AppHandle, event: tauri::menu::MenuEvent) {
     match event.id().as_ref() {
         "show" => {
             if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
             }

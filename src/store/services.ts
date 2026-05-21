@@ -98,8 +98,18 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
 
   setFullscreen: (value) => set({ isFullscreen: value }),
 
-  openWizard: () => set({ wizardOpen: true }),
-  closeWizard: () => set({ wizardOpen: false }),
+  openWizard: () => {
+    const { activeId } = get();
+    set({ wizardOpen: true, flyoutOpen: false });
+    // Hide the native webview so the wizard (React layer) isn't covered
+    if (activeId) invoke("hide_service_view").catch(() => {});
+  },
+
+  closeWizard: () => {
+    const { activeId } = get();
+    set({ wizardOpen: false });
+    if (activeId) invoke("show_service_view").catch(() => {});
+  },
 
   saveServiceConfig: async (enabledIds, custom) => {
     try {
@@ -110,7 +120,9 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
     } catch (e) {
       console.error("[ingwe] saveServiceConfig error:", e);
     }
+    const { activeId } = get();
     set({ enabledIds, customServices: custom, wizardOpen: false });
+    if (activeId) invoke("show_service_view").catch(() => {});
   },
 
   initFromStore: async () => {
