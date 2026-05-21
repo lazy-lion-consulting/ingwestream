@@ -140,7 +140,6 @@ function ServiceLauncher() {
     <div className="absolute inset-0 flex flex-col bg-bg-base">
       <LauncherHeader />
       <LauncherPane title="Video" services={video} />
-      <div className="shrink-0 border-t border-border-base" />
       <LauncherPane title="Music" services={music} />
       <LauncherFooter />
     </div>
@@ -203,13 +202,18 @@ function LauncherPane({
         </p>
         <div className="h-px flex-1 bg-border-base" />
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 pb-6">
-        {/* flex-wrap + justify-center keeps every row — including a partial
-            last row — horizontally centred within the pane. */}
-        <div className="flex flex-wrap justify-center gap-3">
-          {services.map((s) => (
-            <ServiceCard key={s.id} service={s} />
-          ))}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* min-h-full + items-center vertically centres the grid when its
+            content fits within the pane; once content exceeds the pane height
+            the outer container's overflow-y-auto takes over. flex-wrap +
+            justify-center keeps every row — including a partial last row —
+            horizontally centred. */}
+        <div className="min-h-full flex items-center justify-center px-8 py-4">
+          <div className="flex flex-wrap justify-center gap-3">
+            {services.map((s) => (
+              <ServiceCard key={s.id} service={s} />
+            ))}
+          </div>
         </div>
       </div>
     </section>

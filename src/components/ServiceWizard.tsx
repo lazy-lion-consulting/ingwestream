@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X, Plus, Trash2, Globe, Check, Pencil } from "lucide-react";
+import { getName } from "@tauri-apps/api/app";
 import { cn } from "@/lib/utils";
 import { useServicesStore } from "@/store/services";
 import { SERVICES, type ServiceDefinition } from "@/services/serviceRegistry";
+import logoUrl from "../../media/logo.png";
 
 type ServiceCategory = NonNullable<ServiceDefinition["category"]>;
 
@@ -74,13 +76,62 @@ function FaviconImg({ src, alt }: { src: string; alt: string }) {
   );
 }
 
-// ── Section label ─────────────────────────────────────────────────────────────
+// ── Section divider ───────────────────────────────────────────────────────────
+// Hairline-framed section title that matches the launcher's pane headers, so
+// the wizard and the startup screen feel like the same product.
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionDivider({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] text-text-disabled tracking-widest uppercase mb-2 px-0.5">
-      {children}
-    </p>
+    <div className="flex items-center gap-3 mb-5">
+      <div className="h-px flex-1 bg-border-base" />
+      <p className="text-[10px] tracking-[0.2em] uppercase font-semibold text-text-muted">
+        {children}
+      </p>
+      <div className="h-px flex-1 bg-border-base" />
+    </div>
+  );
+}
+
+// ── Wizard header — same hero treatment as the launcher ───────────────────────
+
+function WizardHeader({
+  canClose,
+  onClose,
+}: {
+  canClose: boolean;
+  onClose: () => void;
+}) {
+  const [appName, setAppName] = useState("IngweStream");
+  useEffect(() => {
+    getName().then(setAppName).catch(() => {});
+  }, []);
+
+  return (
+    <header className="shrink-0 relative flex items-center justify-center gap-5 px-8 pt-8 pb-6">
+      <img
+        src={logoUrl}
+        alt=""
+        aria-hidden
+        className="size-14 object-contain drop-shadow-[0_2px_12px_rgba(79,134,247,0.25)]"
+      />
+      <div className="flex flex-col leading-tight">
+        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
+          {appName}
+        </h1>
+        <p className="text-xs text-text-muted mt-1 tracking-wide">
+          Choose which services to keep, or add your own
+        </p>
+      </div>
+      {canClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-5 right-5 shrink-0 text-text-muted hover:text-text-primary transition-colors duration-150 p-1.5 rounded-md hover:bg-bg-elevated"
+          aria-label="Close settings"
+        >
+          <X className="size-4" />
+        </button>
+      )}
+    </header>
   );
 }
 
@@ -409,33 +460,14 @@ export function ServiceWizard() {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg-base">
-      {/* ── Header ── */}
-      <div className="shrink-0 flex items-start justify-between px-8 pt-7 pb-5">
-        <div>
-          <h1 className="text-base font-semibold text-text-primary tracking-tight">
-            Set up your services
-          </h1>
-          <p className="text-xs text-text-muted mt-1">
-            Tap a card to enable or disable a service. Custom services can be
-            edited or removed via the card controls.
-          </p>
-        </div>
-        {canClose && (
-          <button
-            onClick={closeWizard}
-            className="mt-0.5 ml-6 shrink-0 text-text-muted hover:text-text-primary transition-colors duration-150 p-1 rounded-md hover:bg-bg-elevated"
-            aria-label="Close settings"
-          >
-            <X className="size-4" />
-          </button>
-        )}
-      </div>
+      {/* ── Header — mirrors the launcher's hero: logo + name + tagline ── */}
+      <WizardHeader canClose={canClose} onClose={closeWizard} />
 
       {/* ── Scrollable body ── */}
-      <div className="flex-1 overflow-y-auto px-8 pb-4">
+      <div className="flex-1 overflow-y-auto px-8 pt-8 pb-4">
         {/* Video */}
-        <div className="mb-6">
-          <SectionLabel>Video streaming</SectionLabel>
+        <div className="mb-8">
+          <SectionDivider>Video streaming</SectionDivider>
           <div className={GRID}>
             {videoServices.map((svc) => (
               <ServiceCard
@@ -449,8 +481,8 @@ export function ServiceWizard() {
         </div>
 
         {/* Music */}
-        <div className="mb-6">
-          <SectionLabel>Music streaming</SectionLabel>
+        <div className="mb-8">
+          <SectionDivider>Music streaming</SectionDivider>
           <div className={GRID}>
             {musicServices.map((svc) => (
               <ServiceCard
@@ -465,7 +497,7 @@ export function ServiceWizard() {
 
         {/* Custom */}
         <div>
-          <SectionLabel>Custom services</SectionLabel>
+          <SectionDivider>Custom services</SectionDivider>
 
           {pendingCustom.length > 0 && (
             <div className="mb-3">
