@@ -1,0 +1,1 @@
+- [ ] Add a fly out `exit fullscreen` button if, in full screen, and the cursor is moved to the top of the screen.
