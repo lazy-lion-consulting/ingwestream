@@ -62,7 +62,7 @@ export function TitleBar({ forceShow = false }: { forceShow?: boolean }) {
       className={cn(
         "relative h-8 flex items-center justify-between bg-bg-surface border-b border-border-base select-none shrink-0",
         "transition-all duration-150",
-        isFullscreen && !forceShow && "h-0 overflow-hidden opacity-0 pointer-events-none",
+        isFullscreen && !forceShow && !!activeId && "h-0 overflow-hidden opacity-0 pointer-events-none",
       )}
     >
       {/* Left: menu toggle + app/service name */}

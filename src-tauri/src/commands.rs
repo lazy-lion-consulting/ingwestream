@@ -88,6 +88,18 @@ pub fn init_service_webview(app: &AppHandle) -> Result<(), AppError> {
                             } else {
                                 log::info!("on_page_load: injected media bridge for {url}");
                             }
+                            // Sync exit-fullscreen button with current state so the button
+                            // is shown immediately on fresh navigations inside fullscreen.
+                            let is_fs = if let Some(st) = app.try_state::<Mutex<AppState>>() {
+                                st.lock().map(|s| s.is_fullscreen).unwrap_or(false)
+                            } else {
+                                false
+                            };
+                            if is_fs {
+                                let _ = webview.eval(
+                                    "if(window.__ingweSetFullscreen)window.__ingweSetFullscreen(1);"
+                                );
+                            }
                             let _ = app.emit("service-load-finished", url.to_string());
                         }
                     }
@@ -317,6 +329,16 @@ pub fn toggle_fullscreen_layout(
 
     app.emit("fullscreen-changed", new_fullscreen)
         .map_err(|e| AppError::Tauri(e.to_string()))?;
+
+    // Notify the service webview so the injected exit button shows/hides.
+    let view = state.lock().ok().and_then(|s| s.service_view.clone());
+    if let Some(v) = view {
+        let _ = v.eval(&format!(
+            "if(window.__ingweSetFullscreen)window.__ingweSetFullscreen({});",
+            new_fullscreen as u8
+        ));
+    }
+
     log::info!("toggle_fullscreen_layout: fullscreen={new_fullscreen}");
     Ok(())
 }
@@ -547,6 +569,16 @@ pub fn toggle_fullscreen_from_shortcut(app: &AppHandle) {
         let _ = main.run_on_main_thread(move || apply_resize_all(&app_clone));
     }
     let _ = app.emit("fullscreen-changed", new_fullscreen);
+
+    // Notify the service webview so the injected exit button shows/hides.
+    let view = state.lock().ok().and_then(|s| s.service_view.clone());
+    if let Some(v) = view {
+        let _ = v.eval(&format!(
+            "if(window.__ingweSetFullscreen)window.__ingweSetFullscreen({});",
+            new_fullscreen as u8
+        ));
+    }
+
     log::info!("F11 fullscreen: {new_fullscreen}");
 }
 

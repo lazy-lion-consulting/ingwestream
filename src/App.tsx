@@ -33,11 +33,18 @@ function App() {
         setOverlayVisible(false);
       }
       // Belt-and-suspenders: re-apply resize after React re-renders.
-      // 80 ms catches Windows/Linux; 650 ms catches the end of the macOS
-      // native fullscreen animation (~500 ms) which fires a final Resized event.
-      invoke("apply_fullscreen_resize").catch(() => {});
-      setTimeout(() => invoke("apply_fullscreen_resize").catch(() => {}), 80);
-      setTimeout(() => invoke("apply_fullscreen_resize").catch(() => {}), 650);
+      // Exiting macOS native fullscreen triggers a ~500 ms exit animation and
+      // the window's inner_size only settles after the animation completes — so
+      // we use a longer, denser retry window for the exit direction to ensure
+      // the service view is repositioned to the correct windowed dimensions.
+      const delays = e.payload
+        ? [0, 80, 650]           // entering fullscreen
+        : [0, 80, 300, 650, 1000, 1500]; // exiting — extra retries for macOS
+      delays.forEach((d) =>
+        d === 0
+          ? invoke("apply_fullscreen_resize").catch(() => {})
+          : setTimeout(() => invoke("apply_fullscreen_resize").catch(() => {}), d),
+      );
     }).then((fn) => { unlisten = fn; });
 
     return () => { unlisten?.(); };

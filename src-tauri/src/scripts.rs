@@ -293,6 +293,32 @@ pub const WEBVIEW_DARK_INIT: &str = r#"
 
   // 8. Diagnostic ping — logs to Rust so we can confirm the init script loaded
   ctrlPing('script-ready');
+
+  // 9. Floating exit-fullscreen button — show/hide via window.__ingweSetFullscreen(bool)
+  //    Rendered inside the service webview (which sits above the React layer) so it is
+  //    always accessible when a service is active in fullscreen mode.
+  (function() {
+    window.__ingweSetFullscreen = function(isFs) {
+      window.__ingweFullscreen = !!isFs;
+      var b = document.getElementById('__ingwe-exit-fs-btn');
+      if (b) b.style.display = isFs ? 'flex' : 'none';
+    };
+    function attachExitBtn() {
+      if (!document.body) return;
+      if (document.getElementById('__ingwe-exit-fs-btn')) return;
+      var b = document.createElement('button');
+      b.id = '__ingwe-exit-fs-btn';
+      b.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg><span>Exit Fullscreen</span>';
+      b.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483647;display:none;align-items:center;gap:5px;padding:5px 9px 5px 7px;background:rgba(0,0,0,0.70);color:rgba(240,240,240,0.80);border:1px solid rgba(255,255,255,0.10);border-radius:7px;cursor:pointer;font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:500;letter-spacing:0.02em;line-height:1;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);transition:background 0.15s,color 0.15s;pointer-events:auto';
+      b.addEventListener('mouseover', function() { b.style.background = 'rgba(17,17,17,0.88)'; b.style.color = '#f0f0f0'; });
+      b.addEventListener('mouseout',  function() { b.style.background = 'rgba(0,0,0,0.70)';    b.style.color = 'rgba(240,240,240,0.80)'; });
+      b.addEventListener('click', function(e) { e.stopPropagation(); ctrlPing('escape'); });
+      if (window.__ingweFullscreen) b.style.display = 'flex';
+      document.body.appendChild(b);
+    }
+    if (document.body) { attachExitBtn(); }
+    else { document.addEventListener('DOMContentLoaded', attachExitBtn, { once: true }); }
+  })();
 })();
 "#;
 
