@@ -73,19 +73,59 @@ pub fn run() {
 
             commands::init_service_webview(&app.handle())?;
 
+            // Belt-and-suspenders: re-apply the service view resize after a short
+            // delay so that any window-state plugin restoration that runs after
+            // setup() has finished is reflected in the child webview bounds.
+            // Two passes (200 ms + 600 ms) cover both fast and slow state-restore
+            // timing, particularly on macOS where layout can settle later.
+            {
+                let h = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    for delay in [200u64, 600] {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        if let Some(w) = h.get_webview_window("main") {
+                            let h2 = h.clone();
+                            let _ = w.run_on_main_thread(move || {
+                                commands::resize_service_view(&h2);
+                            });
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::Resized(_) = event {
-                    // Child-webview resize must happen on the main thread on macOS;
-                    // dispatching here from the event thread silently no-ops on WKWebView.
-                    let app = window.app_handle().clone();
-                    if let Some(w) = window.app_handle().get_webview_window("main") {
-                        let _ = w.run_on_main_thread(move || {
-                            commands::resize_service_view(&app);
-                        });
+                // Capture physical size and scale synchronously from the event/window
+                // so the main-thread closure receives the correct dimensions.
+                // Re-reading inner_size() inside run_on_main_thread is unreliable on
+                // macOS — WKWebView layout can settle after the event fires, causing
+                // the child webview to be positioned against a stale/incorrect size.
+                match event {
+                    tauri::WindowEvent::Resized(size) => {
+                        let pw = size.width;
+                        let ph = size.height;
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        let app = window.app_handle().clone();
+                        if let Some(w) = window.app_handle().get_webview_window("main") {
+                            let _ = w.run_on_main_thread(move || {
+                                commands::resize_service_view_sized(&app, pw, ph, scale);
+                            });
+                        }
                     }
+                    tauri::WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size, .. } => {
+                        let pw = new_inner_size.width;
+                        let ph = new_inner_size.height;
+                        let scale = *scale_factor;
+                        let app = window.app_handle().clone();
+                        if let Some(w) = window.app_handle().get_webview_window("main") {
+                            let _ = w.run_on_main_thread(move || {
+                                commands::resize_service_view_sized(&app, pw, ph, scale);
+                            });
+                        }
+                    }
+                    _ => {}
                 }
             }
         })

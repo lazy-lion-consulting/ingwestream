@@ -508,6 +508,39 @@ pub fn resize_service_view(app: &AppHandle) {
     apply_resize_all(app);
 }
 
+/// Like `apply_resize_all` but uses caller-supplied physical dimensions instead
+/// of re-reading `inner_size()`, which can return a stale value on macOS by the
+/// time the main-thread closure runs after a resize event.
+pub fn resize_service_view_sized(app: &AppHandle, pw: u32, ph: u32, scale: f64) {
+    let (view, is_fullscreen, ov_tb, ov_sb) =
+        if let Some(state) = app.try_state::<Mutex<AppState>>() {
+            if let Ok(s) = state.lock() {
+                (s.service_view.clone(), s.is_fullscreen, s.overlay_titlebar, s.overlay_sidebar)
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+    let Some(v) = view else { return };
+
+    let w = pw as f64 / scale;
+    let total_h = ph as f64 / scale;
+
+    let (x, y, vw, vh) = if is_fullscreen {
+        let x = if ov_sb { SIDEBAR_W } else { 0.0 };
+        let y = if ov_tb { TITLEBAR_H } else { 0.0 };
+        (x, y, (w - x).max(0.0), (total_h - y).max(0.0))
+    } else {
+        (0.0, TITLEBAR_H, w, (total_h - TITLEBAR_H).max(0.0))
+    };
+
+    log::info!("resize_sized: physical={pw}x{ph} scale={scale:.2} logical={vw:.0}x{vh:.0} pos=({x:.0},{y:.0})");
+    let _ = v.set_size(tauri::Size::Logical(LogicalSize::new(vw, vh)));
+    let _ = v.set_position(tauri::Position::Logical(LogicalPosition::new(x, y)));
+}
+
 pub fn dispatch_media_key(app: &AppHandle, action: &str) {
     // Debounce: key-repeat on Windows fires RegisterHotKey many times per second.
     {

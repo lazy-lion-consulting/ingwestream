@@ -1,9 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "service-view",
-  "description": "Minimal capability for the service child webview",
+  "description": "No Tauri plugin capabilities for the service child webview — communication uses custom URI schemes (ingwe-ctrl://, ingwe-notify://) only. Keeping this file empty prevents Tauri from injecting plugin IPC initialisers (e.g. notification:is_permission_granted) that produce CSP errors on strict third-party pages.",
   "windows": ["service-view"],
-  "permissions": [
-    "notification:allow-is-permission-granted"
-  ]
+  "permissions": []
 }
